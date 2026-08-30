@@ -1,0 +1,74 @@
+#lang rhombus/and_meta
+import: "../private/core.rhm" open
+
+define_object note
+
+define_coordinate interval:
+  merge:
+    fun (l_star, r_star, l, r, ctxt):
+      cond
+      | l_star && r_star:
+          def ls = args_of(l_star)[0].unwrap()
+          'interval $(Syntax.make(ls + args_of(r_star)[0].unwrap())) $(Syntax.make(ls + args_of(r_star)[1].unwrap()))'
+      | ~else: (r_star || l_star)
+  within:
+    fun (l_star, r_star, l, r, ctxt):
+      args_of(l_star)[0].unwrap() >= args_of(r_star)[0].unwrap()
+        && args_of(l_star)[1].unwrap() <= args_of(r_star)[1].unwrap()
+
+define_realizer count_notes:
+  fun (ctxt): context_ref_all(ctxt, #'note).length()
+
+// (1) define_art variable, spliced on reference
+define_art cmajor:
+  note c 0 5
+  note e 0 5
+  note g 0 5
+def a1 = realize count_notes:
+           cmajor
+           note d 0 5
+println("(1) define_art spliced -> notes: " +& to_string(a1))       // 4
+
+// (2) delete_by_id via a rewriter dropping every note seen so far
+define_rewriter drop_notes:
+  fun (expr): context_ref_all(current_ctxt(), #'note).map(delete_expr)
+def d1 = realize count_notes:
+           note c 0 5
+           note d 0 5
+           drop_notes
+           note e 0 5
+println("(2) delete_by_id (drop 2, keep 1) -> notes: " +& to_string(d1))  // 1
+
+// (3) replace_full_context via a rewriter
+define_rewriter reset_to_one:
+  fun (expr): ['replace_full_context: note x 0 5']
+def r1 = realize count_notes:
+           note c 0 5
+           note d 0 5
+           reset_to_one
+println("(3) replace_full_context -> notes: " +& to_string(r1))     // 1
+
+// (4) context_ref_surrounding, driven by interval's within? rule
+define_realizer surrounding:
+  fun (ctxt): context_ref_surrounding(ctxt, ['interval 1 2'], #'note).length()
+def s1 = realize surrounding:
+           at [interval 0 4]: note c 0 5
+           at [interval 5 8]: note d 0 5
+println("(4) context_ref_surrounding [1,2] -> notes: " +& to_string(s1))  // 1
+
+// (5) non-homogeneous merge: `absolute` drops any `interval` it meets
+define_coordinate absolute:
+  nonhom:
+    fun (left, right, ctxt): remove_from_ctxt(right, #'interval)
+define_realizer has_interval:
+  fun (ctxt):
+    def n = context_ref(ctxt, #'note)
+    if n && context_ref(get_ctxt(n), #'interval) | "yes" | "no"
+def with_abs = realize has_interval:
+                 at [absolute]:
+                   at [interval 0 4]:
+                     note c 0 5
+def plain = realize has_interval:
+              at [interval 0 4]:
+                note c 0 5
+println("(5) nonhom: interval present  with-absolute=" +& with_abs +& "  plain=" +& plain)

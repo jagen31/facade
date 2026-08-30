@@ -4,15 +4,16 @@ import: "../private/core.rhm" open
 define_object note
 
 // interval coordinate: nesting translates its start
-define_coordinate interval ~merge:
-  fun (l_star, r_star, l, r, ctxt):
-    cond
-    | l_star && r_star:
-        def ls = args_of(l_star)[0].unwrap()
-        def ns = Syntax.make(ls + args_of(r_star)[0].unwrap())
-        def ne = Syntax.make(ls + args_of(r_star)[1].unwrap())
-        'interval $ns $ne'
-    | ~else: (r_star || l_star)
+define_coordinate interval:
+  merge:
+    fun (l_star, r_star, l, r, ctxt):
+      cond
+      | l_star && r_star:
+          def ls = args_of(l_star)[0].unwrap()
+          def ns = Syntax.make(ls + args_of(r_star)[0].unwrap())
+          def ne = Syntax.make(ls + args_of(r_star)[1].unwrap())
+          'interval $ns $ne'
+      | ~else: (r_star || l_star)
 
 // realizer: describe each note as pitch@start..end
 define_realizer pitches:
@@ -33,18 +34,13 @@ def result = realize pitches:
                at [interval 10 20]:
                  at [interval 0 4]:
                    note e 0 5
-
 println(result)
 
 // --- rewriter + embedding ---
 define_rewriter two_notes:
-  fun (expr):
-    ['note c 0 5', 'note g 0 5']    // expands to two notes
-
+  fun (expr): ['note c 0 5', 'note g 0 5']
 define_embedding music:
-  fun (expr):
-    rewrite(body_of(expr))          // rewrites its own body behind a barrier
-
+  fun (expr): rewrite(body_of(expr))
 define_realizer count_notes:
   fun (ctxt): context_ref_all(ctxt, #'note).length()
 

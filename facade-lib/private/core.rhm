@@ -38,13 +38,20 @@ export:
     kind_of
     context_ref
     context_ref_all
+    context_ref_surrounding
+    context_ref_within
     remove_from_ctxt
     put_in_ctxt
     merge_coordinates
     context_within
+    art_id_of
+    delete_expr
+    current_ctxt
+    lookup_ctxt
     run_art_exprs
     rewrite
   define_object
+  define_art
   define_coordinate
   define_rewriter
   define_embedding
@@ -59,10 +66,13 @@ export:
 
 meta:
   class ObjectKind()
-  class CoordinateKind(merge, within)  // (l*, r*, l, r, ctxt) -> Syntax / Boolean
+  // merge/within: (l*, r*, l, r, ctxt) -> Syntax / Boolean;
+  // nonhom: (left, right, ctxt) -> right'  (may look at / drop other coords)
+  class CoordinateKind(merge, within, nonhom)
   class RewriterKind(body)             // (Syntax) -> List(Syntax)
   class EmbeddingKind(compile)         // (Syntax) -> List(Syntax)
   class RealizerKind(body)             // (List) -> Syntax
+  class ArtVarKind(exprs)              // a rewritten program, spliced on reference
 
 // ---------------------------------------------------------------------
 // syntax utilities -- head, args, and the identity-context property
@@ -105,6 +115,13 @@ meta:
     ctxt.filter(~keep: fun (e): head_of(e) != name)
   fun put_in_ctxt(ctxt, e):
     [e] ++ remove_from_ctxt(ctxt, head_of(e))
+  // forms of type `name` whose coordinates *contain* `coords`, nearest first
+  fun context_ref_surrounding(ctxt, coords, name):
+    def cands = ctxt.filter(~keep: fun (e): head_of(e) == name && context_within(coords, get_ctxt(e), ctxt))
+    cands.sort(fun (l, r): context_within(get_ctxt(l), get_ctxt(r), ctxt))
+  // forms of type `name` *contained by* `coords`
+  fun context_ref_within(ctxt, coords, name):
+    ctxt.filter(~keep: fun (e): head_of(e) == name && context_within(get_ctxt(e), coords, ctxt))
   // distinct coordinate heads across two contexts, as (symbol, syntax) so
   // we can both compare and look up the kind
   fun coord_names(left, right):
@@ -127,14 +144,18 @@ meta:
       match k
       | c :: CoordinateKind:
           def m = c.merge
-          if m
-          | block:
-              def l_star = context_ref(left, name)
-              def r_star = context_ref(acc, name)
-              if l_star || r_star
-              | put_in_ctxt(acc, m(l_star, r_star, left, acc, ctxt))
-              | acc
-          | acc
+          def l_star = context_ref(left, name)
+          def r_star = context_ref(acc, name)
+          // homogeneous merge of this coordinate; with no merge rule the
+          // default is to carry it (inner/right wins, else outer/left)
+          def acc2:
+            if l_star || r_star
+            | put_in_ctxt(acc, if m | m(l_star, r_star, left, acc, ctxt) | (r_star || l_star))
+            | acc
+          // then this coordinate's non-homogeneous rule (may drop/modify
+          // *other* coordinates), given the whole left and right contexts
+          def nh = c.nonhom
+          if nh | nh(left, acc2, ctxt) | acc2
       | ~else: acc
 
   // is context `l` within context `r`?  each coordinate's within? rule
@@ -164,6 +185,7 @@ meta:
   def current_ctxt_box = Box([])
   def lookup_ctxt_box = Box([])
   fun current_ctxt(): current_ctxt_box.value
+  fun lookup_ctxt(): lookup_ctxt_box.value
   fun with_ctxts(cur, lk, thunk):
     def oc = current_ctxt_box.value
     def ol = lookup_ctxt_box.value
@@ -191,6 +213,15 @@ meta:
         set_ctxt(expr, ['art_id $n'] ++ get_ctxt(expr))
   fun rebuild_embedding(expr, inner):
     ensure_id(expr).group_property(#'inner, inner, #true)
+  // the art-id value of a form (a syntax term), or #false
+  fun art_id_of(e):
+    def c = context_ref(get_ctxt(e), #'art_id)
+    if c | args_of(c)[0] | #false
+  fun id_eq(a, b): a && b && a.unwrap() == b.unwrap()
+  // a `delete_by_id` instruction that removes `e` (for rewriters)
+  fun delete_expr(e):
+    def id = art_id_of(e)
+    'delete_by_id $id'
 
 // ---------------------------------------------------------------------
 // the rewriting engine (compile time, over syntax)
@@ -208,6 +239,12 @@ meta:
         def merged = merge_coordinates(get_ctxt(expr), [coord, ...], current_ctxt())
         fun push(b): set_ctxt(b, merge_coordinates(merged, get_ctxt(b), current_ctxt()))
         run_art_exprs([inner, ...].map(push), ctxt, lk_ctxt)
+    // delete every form carrying the given art-id
+    | 'delete_by_id $the_id':
+        ctxt.filter(~keep: fun (e): !id_eq(art_id_of(e), the_id))
+    // discard the whole context and rewrite the body fresh
+    | 'replace_full_context: $g; ...':
+        run_art_exprs([g, ...], [], [])
     | ~else:
         def hid = head_id_of(expr)
         match (if hid | kind_of(hid) | #false)
@@ -217,6 +254,10 @@ meta:
         | em :: EmbeddingKind:
             def inner = with_ctxts(ctxt, lk_ctxt, fun (): (em.compile)(expr))
             ctxt ++ [rebuild_embedding(expr, inner)]
+        | av :: ArtVarKind:
+            // splice the stored program, merging the reference's coords in
+            fun pull(e): set_ctxt(e, merge_coordinates(get_ctxt(expr), get_ctxt(e), current_ctxt()))
+            run_art_exprs((av.exprs).map(pull), ctxt, lk_ctxt)
         | ob :: ObjectKind: ctxt ++ [ensure_id(expr)]
         | co :: CoordinateKind: ctxt ++ [ensure_id(expr)]
         | ~else: syntax_meta.error("run_art_expr: unknown art form", expr)
@@ -231,21 +272,38 @@ meta:
 defn.macro 'define_object $(name :: Identifier)':
   'af.bind $name: ObjectKind()'
 
-// define_coordinate name                      -- a plain coordinate
-// define_coordinate name ~merge: fn ~within: fn -- with rules (each fn:
-//   (l_star, r_star, l, r, ctxt) -> Syntax / Boolean)
+// define_art name: <program>  -- rewrite the body now and bind `name` to
+// it; a later reference to `name` in a program splices it in (art3's
+// define-art variable).
+defn.macro 'define_art $(name :: Identifier): $g; ...':
+  'af.bind $name: ArtVarKind(rewrite(['$g', ...]))'
+
+// define_coordinate name                 -- a plain coordinate
+// define_coordinate name:                 -- with rules, each a fun
+//   merge:  fun (l_star, r_star, l, r, ctxt): ...   // -> Syntax
+//   within: fun (l_star, r_star, l, r, ctxt): ...   // -> Boolean
 defn.macro
-| 'define_coordinate $(name :: Identifier) ~merge: $m ~within: $w':
+| 'define_coordinate $(name :: Identifier): $clause; ...':
+    // the body groups of the `kw:` clause, or #false
+    fun body_for(kw):
+      for values(found = #false) (cl in [clause, ...]):
+        match cl
+        | '$(k :: Identifier): $bg; ...':
+            if k.unwrap() == kw | [bg, ...] | found
+        | ~else: found
+    def mg = body_for(#'merge)
+    def wg = body_for(#'within)
+    def ng = body_for(#'nonhom)
+    def mf_stx = if mg | (block: let [g, ...] = mg; 'def mf: $g; ...') | 'def mf = #false'
+    def wf_stx = if wg | (block: let [g, ...] = wg; 'def wf: $g; ...') | 'def wf = #false'
+    def nf_stx = if ng | (block: let [g, ...] = ng; 'def nf: $g; ...') | 'def nf = #false'
     'af.bind $name:
-       def mf: $m
-       def wf: $w
-       CoordinateKind(mf, wf)'
-| 'define_coordinate $(name :: Identifier) ~merge: $m':
-    'af.bind $name:
-       def mf: $m
-       CoordinateKind(mf, #false)'
+       $mf_stx
+       $wf_stx
+       $nf_stx
+       CoordinateKind(mf, wf, nf)'
 | 'define_coordinate $(name :: Identifier)':
-    'af.bind $name: CoordinateKind(#false, #false)'
+    'af.bind $name: CoordinateKind(#false, #false, #false)'
 
 defn.macro 'define_rewriter $(name :: Identifier): $g; ...':
   'af.bind $name:

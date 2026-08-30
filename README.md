@@ -57,8 +57,27 @@ realize pitches:
 // => [c, c, d]  (each nested note carries the merged interval coordinate)
 ```
 
-See `facade-lib/tests/core-demo.rhm` for a worked example covering coordinate
-merging, nested-interval translation, a rewriter, an embedding, and a realizer.
+See `facade-lib/tests/core-demo.rhm` and `facade-lib/tests/extras-demo.rhm` for
+worked examples.
+
+## Surface forms
+
+| form | art3 analogue |
+|---|---|
+| `define_object name` | `define-art-object` |
+| `define_coordinate name:` with `merge:` / `within:` / `nonhom:` clauses | `define-coordinate` + `define-hom-…` / `define-nonhom-…` rules |
+| `define_rewriter name: fun (expr): …` | `define-art-rewriter` |
+| `define_embedding name: fun (expr): …` | `define-art-embedding` |
+| `define_realizer name: fun (ctxt): …` | `define-art-realizer` |
+| `define_art name: <program>` | `define-art` (a variable, spliced on reference) |
+| `at [coord, …]: <body>` | `(@ [(coord …)] …)` |
+| `realize name: <program>` | `(realize (name …) …)` |
+| `delete_by_id id` / `replace_full_context: …` | same (engine special forms) |
+
+Context helpers available to rewriters and realizers (all `meta`): `context_ref`,
+`context_ref_all`, `context_ref_surrounding`, `context_ref_within`,
+`merge_coordinates`, `context_within`, `current_ctxt`, `lookup_ctxt`, `get_ctxt`,
+`head_of`, `args_of`, `body_of`, `art_id_of`, `delete_expr`.
 
 ## Layout
 
