@@ -94,6 +94,20 @@ Context helpers available to rewriters and realizers (all `meta`): `context_ref`
 
 They're re-exported from `main.rhm`, so `import: facade open` brings them in.
 
+### Sequencing (`--`)
+
+`coordinates.rhm` also ports art3's `--`: it lays `[len, body …]` boxes end
+to end on the interval timeline, so box *i* covers `[t, t+len)` (as
+`at [interval t (t+len)]: body; …`) and `t` advances by `len`. An optional
+leading number sets the start (default 0). Because `--` is an *operator* token
+in Rhombus rather than an identifier, it's written `#{--}` (which prints as
+`--`):
+
+```
+#{--} [1, note a 0 4] [2, note d 0 5] [1, note c 1 5]   // 0..1, 1..3, 3..4
+#{--} 4 [1, note a 0 4] [1, note b 0 4]                 // 4..5, 5..6
+```
+
 ## Layout
 
 - `facade-lib/` — the library (collection `facade`)

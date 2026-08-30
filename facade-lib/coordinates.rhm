@@ -12,6 +12,7 @@ import: "private/core.rhm" open
 
 export:
   interval index instant name subset
+  #{--}                    // sequential timeline layout (see below)
   meta:
     expr_interval expr_start expr_end
     expr_index
@@ -60,6 +61,37 @@ meta:
   fun expr_end(e):
     def iv = expr_interval(e)
     if iv | iv[1] | #false
+
+// ---------------------------------------------------------------------
+// --  --  sequential layout on the interval timeline.  Each box
+// `[len, body ...]` is placed end to end: box i covers `[t, t+len)`,
+// becoming `at [interval t (t+len)]: body; ...`, and t advances by len.
+// An optional leading number sets the starting t (default 0):
+//   -- [1, note a 0 4] [2, note d 0 5]        // 0..1, 1..3
+//   -- 4 [1, note a 0 4] [1, note b 0 4]      // 4..5, 5..6
+// Written `#{--}` because `--` is an operator token in Rhombus, not an
+// identifier; `#{--}` is that identifier, and prints back as `--`.
+// ---------------------------------------------------------------------
+
+define_rewriter #{--}:
+  fun (expr):
+    def args = args_of(expr)
+    // a leading start number is present iff the first arg isn't a box
+    def has_start:
+      match args
+      | [first, _, ...]: (match first | '[$_, ...]': #false | ~else: #true)
+      | ~else: #false
+    def start: if has_start | (match args | [f, _, ...]: f.unwrap()) | 0
+    def boxes: if has_start | (match args | [_, r, ...]: [r, ...]) | args
+    def t = Box(start)
+    for values(acc = []) (b in boxes):
+      match b
+      | '[$len, $body, ...]':
+          def s = Syntax.make(t.value)
+          def e = Syntax.make(t.value + len.unwrap())
+          t.value := t.value + len.unwrap()
+          acc ++ ['at [interval $s $e]: $body; ...']
+      | ~else: syntax_meta.error("--: expected a [len, body ...] box", b)
 
 // ---------------------------------------------------------------------
 // index  --  `index i ...`; nesting appends, `within?` by prefix
