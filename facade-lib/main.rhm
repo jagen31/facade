@@ -1,0 +1,10 @@
+#lang rhombus/static
+
+// facade -- the public entry point.  Re-exports the core so that a
+// client can `import: facade` and get everything.
+
+import:
+  "private/core.rhm"
+
+export:
+  all_from(.core)

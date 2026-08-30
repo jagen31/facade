@@ -1,0 +1,27 @@
+#lang rhombus/static
+
+// =====================================================================
+// facade -- the core of Art 4, in Rhombus.
+//
+// Art (art3, in Racket) is a framework for extensible "Art languages":
+// a host of *art forms* -- objects, coordinates, rewriters, and
+// embeddings -- composed by the @-form, with rewriting driven by
+// context.  Tonart (music), Spielart (scripts) and Programmart (concert
+// programs) are instantiations of it.
+//
+// facade re-imagines that core in Rhombus.  This module is the starting
+// point; the primitives grow here.
+//
+// Roadmap (mirrors art/private/core.rkt):
+//   - art forms:   object | coordinate | rewriter | embedding | @-form
+//   - objects:     a head plus fields
+//   - coordinates: locate / scope forms; compose by merging
+//   - the @-form:  attach coordinates to forms, scope rewriters
+//   - rewriting:   context-driven transformation (current vs lookup ctxt)
+//   - embeddings:  sub-contexts hosting another Art language
+// =====================================================================
+
+export:
+  facade_version
+
+def facade_version :: String = "0.0.1"
