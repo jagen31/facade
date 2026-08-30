@@ -24,8 +24,9 @@ export:
   ObjectKind CoordinateKind RewriterKind EmbeddingKind RealizerKind ArtVarKind
   // syntax utilities
   head_of head_id_of args_of body_of get_ctxt set_ctxt
-  // the abstracted name -> kind lookup
-  kind_of coord_kind current_kind_lookup with_kind_lookup set_kind_lookup
+  // the abstracted name -> kind lookup (a Parameter)
+  kind_of coord_kind kind_lookup current_kind_lookup with_kind_lookup
+  install_default_kind_lookup
   // context utilities
   context_ref context_ref_all context_ref_surrounding context_ref_within
   remove_from_ctxt put_in_ctxt coord_names
@@ -71,24 +72,32 @@ fun get_ctxt(stx): stx.group_property(#'id_ctxt) || []
 fun set_ctxt(stx, ctxt): stx.group_property(#'id_ctxt, ctxt, #true)
 
 // ---------------------------------------------------------------------
-// the abstracted name -> kind lookup.  `kind_of` consults whatever
-// lookup is currently installed; the default resolves nothing.  This is
-// the seam that lets the engine run at phase 0 or phase 1.
+// the abstracted name -> kind lookup -- a dynamic PARAMETER.  `kind_of`
+// consults it; a client overrides it dynamically with `with_kind_lookup`
+// (or `parameterize`).  This is the seam that lets the engine run at
+// phase 0 or phase 1.
+//
+// The parameter's *default* delegates to `default_kind_lookup_box`.  That
+// box is what `core.rhm` fills in -- at phase 1 -- with art3's
+// syntax-local-value over the `af` space (`syntax_meta.value`), which
+// this phase-0 module cannot name itself.  So once facade is loaded the
+// parameter defaults to using `syntax_meta.value`; a phase-0 client
+// either overrides it per-extent or replaces the default with
+// `install_default_kind_lookup`.
 // ---------------------------------------------------------------------
 
-def kind_lookup_box = Box(fun (name): #false)
-fun current_kind_lookup(): kind_lookup_box.value
-// install a lookup for the rest of this instantiation (phase 1 install)
-fun set_kind_lookup(lk): kind_lookup_box.value := lk
-// install a lookup for the dynamic extent of `thunk` (scoped override)
-fun with_kind_lookup(lk, thunk):
-  def old = kind_lookup_box.value
-  kind_lookup_box.value := lk
-  def r = thunk()
-  kind_lookup_box.value := old
-  r
+def default_kind_lookup_box = Box(fun (name): error("facade: no name->kind lookup installed"))
+// set what the parameter falls back to when nobody has overridden it
+fun install_default_kind_lookup(lk): default_kind_lookup_box.value := lk
 
-fun kind_of(name_stx): (kind_lookup_box.value)(name_stx)
+def kind_lookup = Parameter.make(fun (name): (default_kind_lookup_box.value)(name))
+fun current_kind_lookup(): kind_lookup()
+// override the lookup for the dynamic extent of `thunk`
+fun with_kind_lookup(lk, thunk):
+  parameterize { kind_lookup: lk }:
+    thunk()
+
+fun kind_of(name_stx): (kind_lookup())(name_stx)
 // the CoordinateKind for a coordinate syntax, or #false
 fun coord_kind(coord):
   def h = head_id_of(coord)

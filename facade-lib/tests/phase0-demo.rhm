@@ -18,7 +18,9 @@ def registry = {
                         for values(acc = []) (x in args_of(e)):
                           acc ++ ['note $x', 'note $x'])
 }
-set_kind_lookup(fun (name): registry.get(name.unwrap(), #false))
+// make the parameter default to our registry (the phase-0 analogue of
+// core.rhm installing the syntax_meta.value lookup)
+install_default_kind_lookup(fun (name): registry.get(name.unwrap(), #false))
 
 // rewrite a program AT RUNTIME
 def out = rewrite(['at [ping 1]: note c; dup a b'])

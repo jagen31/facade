@@ -37,7 +37,8 @@ export:
   meta:
     ObjectKind CoordinateKind RewriterKind EmbeddingKind RealizerKind ArtVarKind
     head_of head_id_of args_of body_of get_ctxt set_ctxt
-    kind_of coord_kind current_kind_lookup with_kind_lookup set_kind_lookup
+    kind_of coord_kind kind_lookup current_kind_lookup with_kind_lookup
+    install_default_kind_lookup
     context_ref context_ref_all context_ref_surrounding context_ref_within
     remove_from_ctxt put_in_ctxt coord_names
     merge_coordinates context_within
@@ -52,14 +53,15 @@ export:
   define_realizer
   realize
 
-// Install the phase-1 name->kind lookup once, at visit time: art3's
-// syntax-local-value over the `af` space.  `syntax_meta.value` is only
-// valid inside expansion, but here we only *store the closure*; it is
-// called later, during `rewrite` / `realize` / `af.bind` expansion, when
-// there is an expansion context.  Every phase-1 use of the engine in a
-// client compilation shares this one installed lookup.
+// Make the `kind_lookup` parameter *default* to art3's syntax-local-value
+// over the `af` space: fill in the default the parameter falls back to.
+// `syntax_meta.value` is only valid inside expansion, but here we merely
+// *store the closure*; it is called later -- during `rewrite` / `realize`
+// / `af.bind` expansion -- when there is an expansion context.  A phase-0
+// client overrides `kind_lookup` (via `with_kind_lookup` / `parameterize`)
+// to run the same engine against its own registry.
 meta:
-  set_kind_lookup(fun (name): syntax_meta.value(name, af_meta.space, fun (): #false))
+  install_default_kind_lookup(fun (name): syntax_meta.value(name, af_meta.space, fun (): #false))
 
 // ---------------------------------------------------------------------
 // surface: definers and the realize form

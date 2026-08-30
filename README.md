@@ -26,16 +26,20 @@ the surface macros (`define_object`, `realize`, …).
 
 The one inherently phase-specific thing an interpreter needs is *"what art form
 is this name bound to?"*. art3 answered with `syntax-local-value` (phase 1 only);
-facade abstracts that into a **lookup parameter** (`set_kind_lookup` /
-`with_kind_lookup`, consulted by `kind_of`). `core.rhm` installs the phase-1
-lookup — `syntax_meta.value` over the `af` space — around the macros; a phase-0
-client installs its own (e.g. a runtime registry) and runs the very same
-`rewrite`. See `facade-lib/tests/phase0-demo.rhm`.
+facade abstracts that into a dynamic **parameter**, `kind_lookup` (consulted by
+`kind_of`). Its *default* is art3's `syntax-local-value` over the `af` space:
+`core.rhm` — the only module that can name `syntax_meta.value` — fills in that
+default at phase 1 (via `install_default_kind_lookup`). So once facade is loaded,
+the lookup **defaults to `syntax_meta.value`** and the surface macros need no
+wrapping. A phase-0 client overrides it for a dynamic extent with
+`with_kind_lookup(lookup, thunk)` (or `parameterize { kind_lookup: … }`) — e.g. a
+runtime registry — and runs the very same `rewrite`. See
+`facade-lib/tests/phase0-demo.rhm`.
 
 | art3 (`core.rkt`, Racket) | facade (Rhombus) |
 |---|---|
 | `define-syntax name (object/s)` | a name bound in the `af` **space** to a kind |
-| `syntax-local-value` | the installed **kind lookup** (`kind_of`); phase 1 uses `syntax_meta.value` over the `af` space |
+| `syntax-local-value` | the `kind_lookup` **parameter** (`kind_of`); defaults to `syntax_meta.value` over the `af` space, overridable per extent |
 | identity context (syntax property) | a `group_property` on each form's syntax |
 | `(@ [(coord …)] …)` | `at [coord, …]: …` (`@` is reserved in Rhombus) |
 | coordinate merge / `within?` rules | attached to each coordinate's binding |
