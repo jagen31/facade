@@ -1,27 +1,276 @@
-#lang rhombus/static
+#lang rhombus
 
 // =====================================================================
 // facade -- the core of Art 4, in Rhombus.
+// (The engine is intentionally dynamic -- heterogeneous art args, a kind
+//  registry, runtime dispatch -- so this module uses `#lang rhombus`
+//  rather than `rhombus/static`.)
 //
-// Art (art3, in Racket) is a framework for extensible "Art languages":
-// a host of *art forms* -- objects, coordinates, rewriters, and
-// embeddings -- composed by the @-form, with rewriting driven by
-// context.  Tonart (music), Spielart (scripts) and Programmart (concert
-// programs) are instantiations of it.
+// A faithful runtime port of art3's core (art/private/core.rkt).  Where
+// art3 does everything at compile time over Racket *syntax*, facade
+// models art forms as runtime `Art` values and runs the same engine:
 //
-// facade re-imagines that core in Rhombus.  This module is the starting
-// point; the primitives grow here.
+//   - art forms:   object | coordinate | rewriter | embedding | context
+//   - identity context: the list of coordinates carried by each form
+//   - the @-form:  attaches coordinates, which merge downward
+//   - rewriting:   context-driven transformation (current + lookup ctxt)
+//   - embeddings:  sub-contexts that compile their own body
+//   - realizers:   compile a rewritten art into an ordinary value
 //
-// Roadmap (mirrors art/private/core.rkt):
-//   - art forms:   object | coordinate | rewriter | embedding | @-form
-//   - objects:     a head plus fields
-//   - coordinates: locate / scope forms; compose by merging
-//   - the @-form:  attach coordinates to forms, scope rewriters
-//   - rewriting:   context-driven transformation (current vs lookup ctxt)
-//   - embeddings:  sub-contexts hosting another Art language
+// A "context" is just a `List` of `Art`.
 // =====================================================================
 
 export:
-  facade_version
+  Art
+  o
+  art_id_of
+  define_object
+  define_coordinate
+  define_rewriter
+  define_embedding
+  define_realizer
+  kind_of
+  current_ctxt
+  lookup_ctxt
+  context_ref
+  context_ref_all
+  context_ref_surrounding
+  context_ref_within
+  remove_from_ctxt
+  put_in_ctxt
+  define_merge_rule
+  define_within_rule
+  merge_coordinates
+  context_within
+  at
+  rewrite
+  realize
 
-def facade_version :: String = "0.0.1"
+// ---------------------------------------------------------------------
+// representation
+// ---------------------------------------------------------------------
+
+// An art form: a `head` symbol, a list of `args` (fields -- values or
+// nested `Art`), and an `id_ctxt` (its identity context: a list of
+// coordinate `Art`s).  `context` and `delete_by_id` are the two special
+// heads the engine interprets directly.
+class Art(head :: Symbol, args :: List, mutable id_ctxt :: List)
+
+// Build an art form with no coordinates: `o(#'note, #'c, 0, 5)`.
+fun o(head :: Symbol, & args :: List) :: Art:
+  Art(head, args, [])
+
+fun copy_with_ctxt(e :: Art, ctxt :: List) :: Art:
+  Art(e.head, e.args, ctxt)
+
+// ---------------------------------------------------------------------
+// kinds + registry
+// ---------------------------------------------------------------------
+
+class ObjectKind()
+class CoordinateKind()
+class RewriterKind(body)       // body: (Art) -> Art | List
+class EmbeddingKind(compile)   // compile: (Art, ctxt) -> List (new args)
+class RealizerKind(body, eval) // body: (List, List) -> Any
+
+def registry = Box({})  // Map: Symbol -> kind
+
+fun register(head :: Symbol, k):
+  registry.value := registry.value ++ { head: k }
+fun kind_of(head :: Symbol):
+  registry.value.get(head, #false)
+
+fun define_object(head :: Symbol): register(head, ObjectKind())
+fun define_coordinate(head :: Symbol): register(head, CoordinateKind())
+fun define_rewriter(head :: Symbol, body): register(head, RewriterKind(body))
+fun define_embedding(head :: Symbol, compile): register(head, EmbeddingKind(compile))
+fun define_realizer(head :: Symbol, body, ~eval: eval = #true):
+  register(head, RealizerKind(body, eval))
+
+// ---------------------------------------------------------------------
+// unique ids (art3's gensym for art-id)
+// ---------------------------------------------------------------------
+
+def id_counter = Box(0)
+fun fresh_id() :: Int:
+  id_counter.value := id_counter.value + 1
+  id_counter.value
+
+// ---------------------------------------------------------------------
+// context utilities -- a context is a `List` of `Art`
+// ---------------------------------------------------------------------
+
+fun has_head(name :: Symbol):
+  fun (e :: Art): e.head == name
+
+fun other_head(name :: Symbol):
+  fun (e :: Art): e.head != name
+
+fun context_ref_all(ctxt :: List, name :: Symbol) :: List:
+  ctxt.filter(~keep: has_head(name))
+
+// first form of type `name`, or #false
+fun context_ref(ctxt :: List, name :: Symbol):
+  def r = context_ref_all(ctxt, name)
+  if r.length() == 0 | #false | r[0]
+
+fun remove_from_ctxt(ctxt :: List, name :: Symbol) :: List:
+  ctxt.filter(~keep: other_head(name))
+
+// cons `e` onto `ctxt`, dropping any prior form with the same head
+fun put_in_ctxt(ctxt :: List, e :: Art) :: List:
+  [e] ++ remove_from_ctxt(ctxt, e.head)
+
+// forms of type `name` whose coordinates *contain* `coords`, nearest first
+fun context_ref_surrounding(ctxt :: List, coords :: List, name :: Symbol) :: List:
+  fun keep(e :: Art): e.head == name && context_within(coords, e.id_ctxt, ctxt)
+  fun nearer(l :: Art, r :: Art): context_within(l.id_ctxt, r.id_ctxt, ctxt)
+  ctxt.filter(~keep: keep).sort(nearer)
+
+// forms of type `name` *contained by* `coords`
+fun context_ref_within(ctxt :: List, coords :: List, name :: Symbol) :: List:
+  fun keep(e :: Art): e.head == name && context_within(e.id_ctxt, coords, ctxt)
+  ctxt.filter(~keep: keep)
+
+// ---------------------------------------------------------------------
+// coordinate merge + within? rules
+// ---------------------------------------------------------------------
+
+def merge_rules = Box([])   // List of (left, right, ctxt) -> right'
+def within_rules = Box([])  // List of (left, right, ctxt) -> Boolean
+
+// merge coordinate list `left` into `right` by running every rule
+fun merge_coordinates(left :: List, right :: List, ctxt :: List) :: List:
+  for values(acc = right) (rule in merge_rules.value):
+    rule(left, acc, ctxt)
+
+// is context `l` within context `r`?  every rule must agree
+fun context_within(l :: List, r :: List, ctxt :: List) :: Boolean:
+  for values(acc = #true) (rule in within_rules.value):
+    acc && rule(l, r, ctxt)
+
+// merge rule for a single coordinate `name`.
+// body: (l_star, r_star, l, r, ctxt) -> Art   (l_star/r_star may be #false)
+fun define_merge_rule(name :: Symbol, body):
+  fun rule(l :: List, r :: List, ctxt :: List):
+    def l_star = context_ref(l, name)
+    def r_star = context_ref(r, name)
+    if l_star || r_star
+    | put_in_ctxt(r, body(l_star, r_star, l, r, ctxt))
+    | r
+  merge_rules.value := merge_rules.value ++ [rule]
+
+// within? rule for a single coordinate `name`.  A form with the
+// coordinate is within one lacking it; both present defers to `body`.
+fun define_within_rule(name :: Symbol, body):
+  fun rule(l :: List, r :: List, ctxt :: List):
+    def l_star = context_ref(l, name)
+    def r_star = context_ref(r, name)
+    cond
+    | l_star && !r_star: #true
+    | r_star && !l_star: #false
+    | l_star && r_star: body(l_star, r_star, l, r, ctxt)
+    | ~else: #true
+  within_rules.value := within_rules.value ++ [rule]
+
+// ---------------------------------------------------------------------
+// art-id -- every form gets a unique id when it lands in a context.
+// (art3's art-id merge rule "never runs"; ids are assigned on landing,
+// not propagated through merges, so each form keeps its own.)
+// ---------------------------------------------------------------------
+
+define_coordinate(#'art_id)
+
+fun art_id_of(e :: Art):
+  def c = context_ref(e.id_ctxt, #'art_id)
+  if c | c.args[0] | #false
+
+fun assign_id(e :: Art) :: Art:
+  if context_ref(e.id_ctxt, #'art_id)
+  | e
+  | Art(e.head, e.args, [o(#'art_id, fresh_id())] ++ e.id_ctxt)
+
+// ---------------------------------------------------------------------
+// current + lookup contexts (art3's phase-1 parameters, at runtime)
+// ---------------------------------------------------------------------
+
+def current_ctxt_box = Box([])
+def lookup_ctxt_box = Box([])
+fun current_ctxt() :: List: current_ctxt_box.value
+fun lookup_ctxt() :: List: lookup_ctxt_box.value
+
+fun with_ctxts(cur :: List, lk :: List, thunk):
+  def old_cur = current_ctxt_box.value
+  def old_lk = lookup_ctxt_box.value
+  current_ctxt_box.value := cur
+  lookup_ctxt_box.value := lk
+  def result = thunk()
+  current_ctxt_box.value := old_cur
+  lookup_ctxt_box.value := old_lk
+  result
+
+// ---------------------------------------------------------------------
+// the @-form: attach coordinates to a body.  Produces a `context` whose
+// id_ctxt is the merged coordinates; the engine merges those downward
+// into each inner form when the context runs.
+// ---------------------------------------------------------------------
+
+fun at(coords :: List, & exprs :: List) :: Art:
+  Art(#'context, exprs, merge_coordinates([], coords, current_ctxt()))
+
+// ---------------------------------------------------------------------
+// the rewriting engine
+// ---------------------------------------------------------------------
+
+fun run_art_exprs(exprs :: List, ctxt :: List, lk_ctxt :: List) :: List:
+  for values(acc = ctxt) (expr in exprs):
+    cond
+    | expr is_a List: run_art_exprs(expr, acc, acc ++ lk_ctxt)
+    | ~else: run_art_expr(expr, acc, acc ++ lk_ctxt)
+
+fun run_art_expr(expr :: Art, ctxt :: List, lk_ctxt :: List) :: List:
+  cond
+  | expr.head == #'context:
+      fun merge_down(b):
+        cond
+        | b is_a Art: copy_with_ctxt(b, merge_coordinates(expr.id_ctxt, b.id_ctxt, current_ctxt()))
+        | ~else: b
+      run_art_exprs(expr.args.map(merge_down), ctxt, lk_ctxt)
+  | expr.head == #'delete_by_id:
+      def target = expr.args[0]
+      fun keep(e :: Art): art_id_of(e) != target
+      ctxt.filter(~keep: keep)
+  | ~else:
+      match kind_of(expr.head)
+      | k :: RewriterKind:
+          fun invoke(): k.body(assign_id(expr))
+          def out = with_ctxts(ctxt, lk_ctxt, invoke)
+          cond
+          | out is_a List: run_art_exprs(out, ctxt, lk_ctxt)
+          | ~else: run_art_expr(out, ctxt, lk_ctxt)
+      | k :: EmbeddingKind:
+          fun compile(): k.compile(expr, ctxt)
+          def new_args = with_ctxts(ctxt, lk_ctxt, compile)
+          ctxt ++ [assign_id(Art(expr.head, new_args, expr.id_ctxt))]
+      | k :: ObjectKind: ctxt ++ [assign_id(expr)]
+      | k :: CoordinateKind: ctxt ++ [assign_id(expr)]
+      | ~else:
+          error("run_art_expr: unknown object/rewriter/embedding: " +& to_string(expr.head))
+
+// rewrite a fresh program (empty starting context)
+fun rewrite(exprs :: List) :: List:
+  run_art_exprs(exprs, [], [])
+
+// ---------------------------------------------------------------------
+// the realizer: rewrite (if the realizer wants it), then hand the
+// finished context to the realizer body under current + lookup ctxt.
+// ---------------------------------------------------------------------
+
+fun realize(realizer_head :: Symbol, args :: List, exprs :: List):
+  match kind_of(realizer_head)
+  | k :: RealizerKind:
+      def exprs2 = if k.eval | rewrite(exprs) | exprs
+      fun invoke(): k.body(args, exprs2)
+      with_ctxts(exprs2, exprs2, invoke)
+  | ~else:
+      error("realize: not a realizer: " +& to_string(realizer_head))
