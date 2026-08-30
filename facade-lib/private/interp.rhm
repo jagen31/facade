@@ -30,6 +30,7 @@ export:
   // context utilities
   context_ref context_ref_all context_ref_surrounding context_ref_within
   remove_from_ctxt put_in_ctxt coord_names
+  get_context require_context remove_from_id_ctxt put_in_id_ctxt rewrite_in
   // coordinate merge + within?
   merge_coordinates context_within
   // current + lookup contexts
@@ -129,6 +130,23 @@ fun coord_names(left, right):
   for values(acc = []) (c in (left ++ right)):
     def n = head_of(c)
     if acc.filter(~keep: fun (p): p[0] == n).length() > 0 | acc | acc ++ [[n, c]]
+
+// the `name` coordinate on `expr` itself, else the nearest one surrounding
+// it in `ctxt` (art3's get-context)
+fun get_context(ctxt, expr, name):
+  def own = context_ref(get_ctxt(expr), name)
+  cond
+  | own: own
+  | ~else:
+      def surr = context_ref_surrounding(ctxt, get_ctxt(expr), name)
+      if surr.length() > 0 | surr[0] | #false
+// get_context, or error if absent (art3's require-context)
+fun require_context(ctxt, expr, name):
+  def r = get_context(ctxt, expr, name)
+  if r | r | error("require_context: no " +& to_string(name) +& " in context of " +& to_string(expr))
+// drop / replace a coordinate on a form's own identity context
+fun remove_from_id_ctxt(stx, name): set_ctxt(stx, remove_from_ctxt(get_ctxt(stx), name))
+fun put_in_id_ctxt(stx, e): set_ctxt(stx, put_in_ctxt(get_ctxt(stx), e))
 
 // ---------------------------------------------------------------------
 // coordinate merge + within?  -- driven by each coordinate's own rules,
@@ -261,6 +279,11 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
 
 fun rewrite(exprs):
   run_art_exprs(exprs, [], [])
+
+// rewrite `exprs` starting from an existing context (art3's rewrite-in):
+// they see `ctxt` (plus the lookup context) but the result extends `ctxt`
+fun rewrite_in(ctxt, exprs):
+  run_art_exprs(exprs, ctxt, ctxt ++ lookup_ctxt())
 
 // pack a realizer's result as expression syntax in `ctx`'s scope:
 // already-syntax is used as-is, a list becomes a list literal, and any

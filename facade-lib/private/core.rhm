@@ -41,6 +41,7 @@ export:
     install_default_kind_lookup
     context_ref context_ref_all context_ref_surrounding context_ref_within
     remove_from_ctxt put_in_ctxt coord_names
+    get_context require_context remove_from_id_ctxt put_in_id_ctxt rewrite_in
     merge_coordinates context_within
     current_ctxt lookup_ctxt with_ctxts
     fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr
@@ -49,6 +50,7 @@ export:
   define_art
   define_coordinate
   define_rewriter
+  define_mapping_rewriter
   define_embedding
   define_realizer
   realize
@@ -107,6 +109,20 @@ defn.macro 'define_rewriter $(name :: Identifier): $g; ...':
   'af.bind $name:
      def the_fn: $g; ...
      RewriterKind(the_fn)'
+
+// define_mapping_rewriter name over head: fun (stx, obj): <list of exprs>
+// -- art3's define-mapping-rewriter: find every form of type `head` within
+// the rewriter's scope, delete them, and splice in `body(stx, obj)` for
+// each (a list of exprs).  `stx` is the rewriter call; `obj` each match.
+defn.macro 'define_mapping_rewriter $(name :: Identifier) over $(head :: Identifier): $g; ...':
+  'af.bind $name:
+     def the_body: $g; ...
+     fun the_rw(stx):
+       def melodies = context_ref_within(current_ctxt(), get_ctxt(stx), #'$head)
+       def dels = melodies.map(delete_expr)
+       def outs = for values(acc = []) (m in melodies): acc ++ the_body(stx, m)
+       dels ++ outs
+     RewriterKind(the_rw)'
 defn.macro 'define_embedding $(name :: Identifier): $g; ...':
   'af.bind $name:
      def the_fn: $g; ...
