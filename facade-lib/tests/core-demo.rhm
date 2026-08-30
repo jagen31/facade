@@ -1,68 +1,64 @@
-#lang rhombus
+#lang rhombus/and_meta
 import: "../private/core.rhm" open
 
-// --- an instantiation: objects, coordinates, their merge/within rules ---
-define_object(#'note)
+define_object note
 
-// interval coordinate: args [start, end]; nesting translates.
-define_coordinate(#'interval)
-fun interval_merge(l, r, _l, _r, _c):
-  cond | l && r: o(#'interval, l.args[0] + r.args[0], l.args[0] + r.args[1]) | ~else: (r || l)
-fun interval_within(l, r, _l, _r, _c): l.args[0] >= r.args[0] && l.args[1] <= r.args[1]
-define_merge_rule(#'interval, interval_merge)
-define_within_rule(#'interval, interval_within)
+// interval coordinate: nesting translates its start
+define_coordinate interval ~merge:
+  fun (l_star, r_star, l, r, ctxt):
+    cond
+    | l_star && r_star:
+        def ls = args_of(l_star)[0].unwrap()
+        def ns = Syntax.make(ls + args_of(r_star)[0].unwrap())
+        def ne = Syntax.make(ls + args_of(r_star)[1].unwrap())
+        'interval $ns $ne'
+    | ~else: (r_star || l_star)
 
-// voice coordinate: inner (right) shadows outer.
-define_coordinate(#'voice)
-fun voice_merge(l, r, _l, _r, _c): (r || l)
-fun voice_within(l, r, _l, _r, _c): l.args[0] == r.args[0]
-define_merge_rule(#'voice, voice_merge)
-define_within_rule(#'voice, voice_within)
+// realizer: describe each note as pitch@start..end
+define_realizer pitches:
+  fun (ctxt):
+    fun desc(n):
+      def p = to_string(args_of(n)[0].unwrap())
+      def iv = context_ref(get_ctxt(n), #'interval)
+      def ivs = if iv | (to_string(args_of(iv)[0].unwrap()) +& ".." +& to_string(args_of(iv)[1].unwrap())) | "-"
+      p +& "@" +& ivs
+    def parts = context_ref_all(ctxt, #'note).map(desc)
+    for values(acc = "") (s in parts): acc +& (if acc == "" | "" | "  ") +& s
 
-// a rewriter: expands to two notes.
-fun two_notes_body(expr): at([], o(#'note, #'c), o(#'note, #'g))
-define_rewriter(#'two_notes, two_notes_body)
+def result = realize pitches:
+               note c 0 5
+               at [interval 0 4]:
+                 note c 0 5
+                 note d 0 5
+               at [interval 10 20]:
+                 at [interval 0 4]:
+                   note e 0 5
 
-// an embedding: `music` rewrites its own body behind a barrier.
-fun music_compile(expr, ctxt): rewrite(expr.args)
-define_embedding(#'music, music_compile)
+println(result)
 
-// a realizer: lists note pitches in order found.
-fun pitches_body(args, exprs): context_ref_all(exprs, #'note).map(fun (n): n.args[0])
-define_realizer(#'pitches, pitches_body)
+// --- rewriter + embedding ---
+define_rewriter two_notes:
+  fun (expr):
+    ['note c 0 5', 'note g 0 5']    // expands to two notes
 
-// a program using the @-form, with coordinate propagation.
-def prog = [
-  at([o(#'voice, #'soprano)],
-     at([o(#'interval, 0, 4)], o(#'note, #'c), o(#'note, #'d)),
-     at([o(#'interval, 100, 8)], o(#'note, #'e)),
-     o(#'two_notes))
-]
-def ctxt = rewrite(prog)
+define_embedding music:
+  fun (expr):
+    rewrite(body_of(expr))          // rewrites its own body behind a barrier
 
-fun show_note(n):
-  def iv = context_ref(n.id_ctxt, #'interval)
-  def vc = context_ref(n.id_ctxt, #'voice)
-  println("  " +& to_string(n.args[0])
-            +& "  voice=" +& (if vc | to_string(vc.args[0]) | "-")
-            +& "  interval=" +& (if iv | to_string(iv.args) | "-"))
+define_realizer count_notes:
+  fun (ctxt): context_ref_all(ctxt, #'note).length()
 
-block:
-  println("=== notes after rewrite (pitch @ voice / interval) ===")
-  for (n in context_ref_all(ctxt, #'note)): show_note(n)
+def rw = realize count_notes:
+           two_notes
+           note c 0 5
+println("rewriter expanded to note count: " +& to_string(rw))
 
-  println("=== nested-interval translation (10..20 over 0..4) ===")
-  def t = rewrite([at([o(#'interval, 10, 20)], at([o(#'interval, 0, 4)], o(#'note, #'x)))])
-  def tn = context_ref_all(t, #'note)[0]
-  println("  x interval = " +& to_string(context_ref(tn.id_ctxt, #'interval).args))
-
-  println("=== embedding: music rewrites its own body ===")
-  def m = rewrite([o(#'music, o(#'note, #'a), o(#'note, #'b))])
-  def mo = context_ref(m, #'music)
-  println("  music holds " +& to_string(mo.args.length()) +& " rewritten inner forms")
-
-  println("=== context_ref_surrounding note within [1,2] ===")
-  println("  count = " +& to_string(context_ref_surrounding(ctxt, [o(#'interval, 1, 2)], #'note).length()))
-
-  println("=== realize ===")
-  println("  pitches = " +& to_string(realize(#'pitches, [], prog)))
+define_realizer count_music:
+  fun (ctxt):
+    def m = context_ref(ctxt, #'music)
+    if m | (m.group_property(#'inner)).length() | 0
+def em = realize count_music:
+           music:
+             note c 0 5
+             note d 0 5
+println("embedding rewrote inner forms: " +& to_string(em))
