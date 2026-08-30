@@ -15,7 +15,7 @@ export:
   #{--}                    // sequential timeline layout (see below)
   meta:
     expr_interval expr_start expr_end
-    expr_index
+    expr_index expr_single_index
     expr_instant
     expr_names
     expr_subset
@@ -114,6 +114,10 @@ meta:
   fun expr_index(e):
     def c = context_ref(get_ctxt(e), #'index)
     if c | nums(c) | []
+  // the first index value (art3's expr-single-index), or #false
+  fun expr_single_index(e):
+    def ix = expr_index(e)
+    if ix.length() > 0 | ix[0] | #false
 
 // ---------------------------------------------------------------------
 // instant  --  `instant t`; cannot merge two, `within?` by equal value

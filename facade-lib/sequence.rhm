@@ -1,0 +1,51 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// facade -- the sequence layer, ported from art3's art/sequence.
+//
+//   seq            an embedding: a block of items, rewritten and held
+//   ix__           lay a block of items out along the `index` coordinate
+//                  (art3's `ix--`; `--` is an operator token in Rhombus)
+//   rewrite_in_seq run a block of rewriters *inside* each seq in scope
+//
+// Multi-item forms use a block (`seq: a; b`) -- the facade idiom for an
+// embedding body -- so they nest cleanly (`seq: ix__: a; b`).
+// =====================================================================
+
+import:
+  "private/core.rhm" open
+  // ix__ emits `index` coordinates, so their binding must resolve here
+  "coordinates.rhm" open
+
+export:
+  seq ix__ rewrite_in_seq
+  meta:
+    seq_items rebuild_seq
+
+// seq: an embedding whose block body is rewritten and stored as its inner
+define_embedding seq:
+  fun (expr): rewrite(body_of(expr))
+
+meta:
+  // the (rewritten) items inside a seq form
+  fun seq_items(s): s.group_property(#'inner) || []
+  // a fresh seq form carrying `items` as its block body, keeping the
+  // original seq's coordinates -- so re-running it re-lands the new items
+  fun rebuild_seq(s, items):
+    block:
+      let [it, ...] = items
+      set_ctxt('seq: $it ; ...', get_ctxt(s))
+
+// ix__: lay each item of the block out along `index`, 0-based
+define_rewriter ix__:
+  fun (expr):
+    for values(acc = []) (it in body_of(expr), i in 0 ..):
+      def ix = Syntax.make(i)
+      acc ++ ['at [index $ix]: $it']
+
+// rewrite_in_seq: <block of rewriters>  -- for each seq in scope, run the
+// rewriters seeded with that seq's items, and rebuild the seq
+define_mapping_rewriter rewrite_in_seq over seq:
+  fun (stx, s):
+    def new_items = rewrite_in(seq_items(s), body_of(stx))
+    [rebuild_seq(s, new_items)]

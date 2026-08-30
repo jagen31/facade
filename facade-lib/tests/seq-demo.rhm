@@ -1,0 +1,32 @@
+#lang rhombus/and_meta
+
+// the sequence layer: ix__ (lay out along `index`), seq (an embedding),
+// and rewrite_in_seq (rewrite inside each seq in scope).
+
+import: facade open
+
+define_object note
+define_object mark
+define_mapping_rewriter notes_to_marks over note:
+  fun (stx, n): [set_ctxt('mark', get_ctxt(n))]
+
+define_realizer dump:
+  fun (ctxt):
+    def s = context_ref(ctxt, #'seq)
+    def items = if s | s.group_property(#'inner) | []
+    println("seq items: "
+              +& to_string(for List (e in items):
+                             def c = context_ref(get_ctxt(e), #'index)
+                             [head_of(e), if c | args_of(c)[0].unwrap() | #false]))
+    '#void'
+
+// ix__ lays notes along index; wrapping them in a seq stores them; then
+// rewrite_in_seq maps notes_to_marks inside the seq
+realize dump:
+  seq:
+    ix__:
+      note c
+      note d
+      note e
+  rewrite_in_seq:
+    notes_to_marks

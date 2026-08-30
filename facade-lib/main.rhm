@@ -7,7 +7,9 @@
 import:
   "private/core.rhm"
   "coordinates.rhm"
+  "sequence.rhm"
 
 export:
   all_from(.core)
   all_from(.coordinates)
+  all_from(.sequence)
