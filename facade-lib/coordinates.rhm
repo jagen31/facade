@@ -1,0 +1,143 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// facade -- the standard coordinate library, ported from art3's
+// art/coordinate/{interval,index,instant,name,subset}.rkt.
+//
+// Each coordinate is written flat (space-separated args) rather than
+// art3's bracketed forms, e.g. `interval 0 4`, `index 1 2`, `name a b`.
+// =====================================================================
+
+import: "private/core.rhm" open
+
+export:
+  interval index instant name subset
+  meta:
+    expr_interval expr_start expr_end
+    expr_index
+    expr_instant
+    expr_names
+    expr_subset
+
+// small meta helpers used by the rules
+meta:
+  fun nums(stx): args_of(stx).map(fun (a): a.unwrap())
+  // r is a prefix of l (both lists), comparing element-wise
+  fun is_prefix(pre, full):
+    cond
+    | pre.length() > full.length(): #false
+    | ~else: (for values(ok = #true) (p in pre, f in full): ok && p == f)
+  fun mem(x, xs): xs.filter(~keep: fun (y): y == x).length() > 0
+  // dedup a list of arg-syntaxes by unwrapped value, keeping order
+  fun dedup(items):
+    for values(acc = []) (a in items):
+      if mem(a.unwrap(), acc.map(fun (b): b.unwrap())) | acc | acc ++ [a]
+
+// ---------------------------------------------------------------------
+// interval  --  `interval start end`; nesting translates the start
+// ---------------------------------------------------------------------
+
+define_coordinate interval:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          def s1 = nums(l)[0]
+          'interval $(Syntax.make(s1 + nums(r)[0])) $(Syntax.make(s1 + nums(r)[1]))'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      def s1 = nums(l)[0]
+      nums(r)[0] <= s1 && s1 < nums(r)[1]
+
+meta:
+  fun expr_interval(e):
+    def c = context_ref(get_ctxt(e), #'interval)
+    if c | nums(c) | #false
+  fun expr_start(e):
+    def iv = expr_interval(e)
+    if iv | iv[0] | 0
+  fun expr_end(e):
+    def iv = expr_interval(e)
+    if iv | iv[1] | #false
+
+// ---------------------------------------------------------------------
+// index  --  `index i ...`; nesting appends, `within?` by prefix
+// ---------------------------------------------------------------------
+
+define_coordinate index:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          block:
+            let [a, ...] = args_of(l) ++ args_of(r)
+            'index $a ...'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      is_prefix(nums(r), nums(l))
+
+meta:
+  fun expr_index(e):
+    def c = context_ref(get_ctxt(e), #'index)
+    if c | nums(c) | []
+
+// ---------------------------------------------------------------------
+// instant  --  `instant t`; cannot merge two, `within?` by equal value
+// ---------------------------------------------------------------------
+
+define_coordinate instant:
+  within:
+    fun (l, r, _l, _r, _c): nums(l)[0] == nums(r)[0]
+
+meta:
+  fun expr_instant(e):
+    def c = context_ref(get_ctxt(e), #'instant)
+    if c | nums(c)[0] | #false
+
+// ---------------------------------------------------------------------
+// name  --  `name a ...`; nesting appends, `within?` by prefix
+// ---------------------------------------------------------------------
+
+define_coordinate name:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          block:
+            let [a, ...] = args_of(l) ++ args_of(r)
+            'name $a ...'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      is_prefix(nums(r), nums(l))
+
+meta:
+  fun expr_names(e):
+    def c = context_ref(get_ctxt(e), #'name)
+    if c | nums(c) | []
+
+// ---------------------------------------------------------------------
+// subset  --  `subset x ...`; a set of names.  Merge is union,
+// `within?` is (right is a subset of left).
+// ---------------------------------------------------------------------
+
+define_coordinate subset:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          block:
+            let [a, ...] = dedup(args_of(l) ++ args_of(r))
+            'subset $a ...'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      def ls = nums(l)
+      for values(ok = #true) (x in nums(r)): ok && mem(x, ls)
+
+meta:
+  fun expr_subset(e):
+    def c = context_ref(get_ctxt(e), #'subset)
+    if c | nums(c) | []

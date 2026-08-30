@@ -79,12 +79,28 @@ Context helpers available to rewriters and realizers (all `meta`): `context_ref`
 `merge_coordinates`, `context_within`, `current_ctxt`, `lookup_ctxt`, `get_ctxt`,
 `head_of`, `args_of`, `body_of`, `art_id_of`, `delete_expr`.
 
+## Coordinates
+
+`facade-lib/coordinates.rhm` ports art3's standard coordinates
+(`art/coordinate/*`), written flat (`interval 0 4`, `index 1 2`, `name a b`):
+
+| coordinate | merge | `within?` | accessors |
+|---|---|---|---|
+| `interval start end` | translate (`outer.start + inner`) | `l.start ∈ [r.start, r.end)` | `expr_interval`, `expr_start`, `expr_end` |
+| `index i …` | append | `r` is a prefix of `l` | `expr_index` |
+| `name a …` | append | `r` is a prefix of `l` | `expr_names` |
+| `instant t` | — (can't merge) | equal `t` | `expr_instant` |
+| `subset x …` | union | `r ⊆ l` | `expr_subset` |
+
+They're re-exported from `main.rhm`, so `import: facade open` brings them in.
+
 ## Layout
 
 - `facade-lib/` — the library (collection `facade`)
-  - `main.rhm` — the public entry point (re-exports the core)
+  - `main.rhm` — the public entry point (re-exports core + coordinates)
   - `private/core.rhm` — the compile-time engine
-  - `tests/core-demo.rhm` — the worked example
+  - `coordinates.rhm` — the standard coordinate library
+  - `tests/` — `core-demo`, `extras-demo`, `coords-demo`
 - `facade/` — the metapackage (pulls in `facade-lib`)
 
 ## Local build

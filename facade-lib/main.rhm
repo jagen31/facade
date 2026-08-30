@@ -1,10 +1,13 @@
 #lang rhombus/static
 
-// facade -- the public entry point.  Re-exports the core so that a
-// client can `import: facade` and get everything.
+// facade -- the public entry point.  Re-exports the core engine and the
+// standard coordinate library so a client can `import: facade` and get
+// everything.
 
 import:
   "private/core.rhm"
+  "coordinates.rhm"
 
 export:
   all_from(.core)
+  all_from(.coordinates)

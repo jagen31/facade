@@ -1,0 +1,33 @@
+#lang rhombus/and_meta
+import:
+  "../private/core.rhm" open
+  "../coordinates.rhm" open
+
+define_object note
+
+define_realizer show:
+  fun (ctxt):
+    fun d(n):
+      to_string(args_of(n)[0].unwrap())
+        +& "  iv=" +& to_string(expr_interval(n))
+        +& "  ix=" +& to_string(expr_index(n))
+        +& "  nm=" +& to_string(expr_names(n))
+        +& "  ss=" +& to_string(expr_subset(n))
+    for values(acc = "") (n in context_ref_all(ctxt, #'note)): acc +& d(n) +& "\n"
+
+def out = realize show:
+            at [name song, index 0]:
+              at [interval 0 4, index 1]:
+                note c 0 5
+            at [subset alto tenor]:
+              note d 0 5
+print(out)
+
+// within?-driven surrounding: index prefix
+define_realizer under_0:
+  fun (ctxt): context_ref_within(ctxt, ['index 0'], #'note).length()
+def u = realize under_0:
+          at [index 0]:
+            at [index 1]: note a 0 5
+          at [index 5]: note b 0 5
+println("notes under index [0]: " +& to_string(u))   // 1 (note a: index [0,1] is within [0])

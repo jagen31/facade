@@ -265,6 +265,18 @@ meta:
   fun rewrite(exprs):
     run_art_exprs(exprs, [], [])
 
+  // pack a realizer's result as expression syntax in `ctx`'s scope:
+  // already-syntax is used as-is, a list becomes a list literal, and any
+  // other value becomes a literal.
+  fun value_to_syntax(v, ctx):
+    cond
+    | v is_a Syntax: v
+    | v is_a List:
+        block:
+          let [x, ...] = v.map(fun (e): value_to_syntax(e, ctx))
+          '[$x, ...]'
+    | ~else: Syntax.make(v, ctx)
+
 // ---------------------------------------------------------------------
 // surface: definers and the realize form
 // ---------------------------------------------------------------------
@@ -325,4 +337,4 @@ defn.macro 'define_realizer $(name :: Identifier): $g; ...':
 expr.macro 'realize $(rname :: Identifier): $prog; ...':
   def k = syntax_meta.value(rname, af_meta.space, fun (): #false)
   def ctxt = rewrite([prog, ...])
-  Syntax.make((k.body)(ctxt), rname)
+  value_to_syntax((k.body)(ctxt), rname)
