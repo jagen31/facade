@@ -1,0 +1,42 @@
+#lang rhombus
+
+// =====================================================================
+// The engine at PHASE 0.  `interp.rhm` is ordinary runtime code, so we
+// can build a *runtime* registry of art forms, install it as the kind
+// lookup, and run the same `rewrite` the surface macros use at compile
+// time -- no `realize`, no phase 1.
+// =====================================================================
+
+import: lib("facade/private/interp.rhm") open
+
+// a runtime registry -- the phase-0 analogue of the `af` space
+def registry = {
+  #'ping: CoordinateKind(#false, #false, #false),   // a plain coordinate
+  #'note: ObjectKind(),                             // an object
+  // a rewriter: `dup a b ...` -> two `note`s per argument
+  #'dup: RewriterKind(fun (e):
+                        for values(acc = []) (x in args_of(e)):
+                          acc ++ ['note $x', 'note $x'])
+}
+set_kind_lookup(fun (name): registry.get(name.unwrap(), #false))
+
+// rewrite a program AT RUNTIME
+def out = rewrite(['at [ping 1]: note c; dup a b'])
+println("phase-0 rewrite -> " +& to_string(out.length()) +& " forms")
+for (e in out):
+  def iv = context_ref(get_ctxt(e), #'ping)
+  println("  " +& to_string(head_of(e))
+            +& "  arg=" +& to_string(args_of(e).map(fun (a): a.unwrap()))
+            +& "  ping=" +& to_string(if iv | args_of(iv).map(fun (a): a.unwrap()) | #false)
+            +& "  id=" +& to_string(if art_id_of(e) | art_id_of(e).unwrap() | #false))
+
+// the lookup is a live seam: install a different one and the same engine
+// resolves names differently (here `dup` is no longer known)
+def minimal = { #'note: ObjectKind() }
+fun scoped():
+  def out2 = rewrite(['note c'])
+  println("scoped lookup -> " +& to_string(out2.length()) +& " form(s)")
+with_kind_lookup(fun (name): minimal.get(name.unwrap(), #false), scoped)
+// the outer registry is restored after `with_kind_lookup`
+println("dup known again after scope: "
+          +& to_string(current_kind_lookup()(head_id_of('dup x')) is_a RewriterKind))

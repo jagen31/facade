@@ -11,25 +11,40 @@ re-imagines that core in Rhombus.
 
 ## Design
 
-`facade` is a faithful port of art3's core
-([`art/private/core.rkt`](https://github.com/jagen31/art3)): a **compile-time
-metaprogramming system over syntax objects**, not a runtime library. Art forms
-are Rhombus *syntax*; the engine rewrites that syntax at expansion time, exactly
-as art3 does.
+`facade` is a port of art3's core
+([`art/private/core.rkt`](https://github.com/jagen31/art3)): a metaprogramming
+system over syntax objects. Art forms are Rhombus *syntax*; the engine rewrites
+that syntax, exactly as art3 does.
 
-| art3 (`core.rkt`, Racket) | facade (`core.rhm`, Rhombus) |
+Unlike art3 (and unlike facade's own first cut), **the engine lives at phase 0**.
+`private/interp.rhm` is ordinary `#lang rhombus` runtime code — the syntax
+utilities, coordinate merge / `within?`, the art-id machinery, and
+`rewrite` / `run_art_expr` — all manipulating syntax objects as plain values. So
+the same engine can run at *either* phase. `private/core.rhm` is the phase-1 skin
+that imports the engine `for-syntax`, re-exports it `for-syntax`, and wraps it in
+the surface macros (`define_object`, `realize`, …).
+
+The one inherently phase-specific thing an interpreter needs is *"what art form
+is this name bound to?"*. art3 answered with `syntax-local-value` (phase 1 only);
+facade abstracts that into a **lookup parameter** (`set_kind_lookup` /
+`with_kind_lookup`, consulted by `kind_of`). `core.rhm` installs the phase-1
+lookup — `syntax_meta.value` over the `af` space — around the macros; a phase-0
+client installs its own (e.g. a runtime registry) and runs the very same
+`rewrite`. See `facade-lib/tests/phase0-demo.rhm`.
+
+| art3 (`core.rkt`, Racket) | facade (Rhombus) |
 |---|---|
-| `define-syntax name (object/s)` | a name bound in the `af` **space** to a compile-time kind |
-| `syntax-local-value` | `syntax_meta.value(name, af_meta.space, …)` |
+| `define-syntax name (object/s)` | a name bound in the `af` **space** to a kind |
+| `syntax-local-value` | the installed **kind lookup** (`kind_of`); phase 1 uses `syntax_meta.value` over the `af` space |
 | identity context (syntax property) | a `group_property` on each form's syntax |
 | `(@ [(coord …)] …)` | `at [coord, …]: …` (`@` is reserved in Rhombus) |
 | coordinate merge / `within?` rules | attached to each coordinate's binding |
-| `run-art-expr` / `rewrite` | same, as `meta` functions over syntax |
+| `run-art-expr` / `rewrite` | same, as **phase-0** functions over syntax |
 | realizers | `realize name: …` — rewrites, then runs the realizer |
 
 Merge/`within?` rules travel with a coordinate's binding (rather than a global
-mutable registry) so they are visible wherever the coordinate is — the
-expansion-time analogue of art3's per-coordinate rules.
+mutable registry) so they are visible wherever the coordinate is — the analogue
+of art3's per-coordinate rules.
 
 ## Usage
 
@@ -112,9 +127,10 @@ in Rhombus rather than an identifier, it's written `#{--}` (which prints as
 
 - `facade-lib/` — the library (collection `facade`)
   - `main.rhm` — the public entry point (re-exports core + coordinates)
-  - `private/core.rhm` — the compile-time engine
+  - `private/interp.rhm` — the phase-0 engine (utils + rewrite, lookup abstracted)
+  - `private/core.rhm` — the phase-1 skin: the `af` space + surface macros
   - `coordinates.rhm` — the standard coordinate library
-  - `tests/` — `core-demo`, `extras-demo`, `coords-demo`
+  - `tests/` — `core-demo`, `extras-demo`, `coords-demo`, `phase0-demo`
 - `facade/` — the metapackage (pulls in `facade-lib`)
 
 ## Local build
