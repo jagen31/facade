@@ -265,7 +265,19 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
       match (if hid | kind_of(hid) | #false)
       | rw :: RewriterKind:
           def out = with_ctxts(ctxt, lk_ctxt, fun (): (rw.body)(ensure_id(expr)))
-          run_art_exprs(out, ctxt, lk_ctxt)
+          // A rewriter's scope reaches its output: each coordinate on the
+          // rewriter form is added to an output form that does not already
+          // carry that coordinate (so `at [section s]: -- ...` puts `s` on
+          // the laid-out forms).  It is *added, never re-merged*, so an
+          // already-scoped form keeps its own -- an append coordinate like
+          // `section` does not accumulate down a rewriter chain.
+          def coords = remove_from_ctxt(get_ctxt(expr), #'art_id)
+          fun carry(o):
+            def oc:
+              for values(acc = get_ctxt(o)) (c in coords):
+                if context_ref(acc, head_of(c)) | acc | acc ++ [c]
+            set_ctxt(o, oc)
+          run_art_exprs(out.map(carry), ctxt, lk_ctxt)
       | em :: EmbeddingKind:
           def inner = with_ctxts(ctxt, lk_ctxt, fun (): (em.compile)(expr))
           ctxt ++ [rebuild_embedding(expr, inner)]
