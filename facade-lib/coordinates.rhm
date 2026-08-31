@@ -13,6 +13,7 @@ import: "private/core.rhm" open
 export:
   interval index instant name subset
   #{--}                    // sequential timeline layout (see below)
+  dilate                   // scale the timeline (see below)
   meta:
     expr_interval expr_start expr_end
     expr_index expr_single_index
@@ -177,3 +178,35 @@ meta:
   fun expr_subset(e):
     def c = context_ref(get_ctxt(e), #'subset)
     if c | nums(c) | []
+
+// ---------------------------------------------------------------------
+// dilate value  --  scale every interval and instant in scope by `value`
+// about the dilate's own start point (art3's timeline `dilate`).  Forms
+// outside the dilate's coordinate scope are dropped, so a bare top-level
+// `dilate` scales the whole piece; nested, it scales just its region.
+// ---------------------------------------------------------------------
+
+define_rewriter dilate:
+  fun (expr):
+    def value = args_of(expr)[0].unwrap()
+    def my_start = expr_start(expr) || 0
+    fun scaled(x): my_start + (x - my_start) * value
+    def within:
+      current_ctxt().filter(~keep: fun (e): context_within(get_ctxt(e), get_ctxt(expr), lookup_ctxt()))
+    def result:
+      for values(acc = []) (e in within):
+        def inst = expr_instant(e)
+        cond
+        | inst:
+            def t = Syntax.make(scaled(inst))
+            acc ++ ['at [instant $t]: $(remove_from_id_ctxt(e, #'instant))']
+        | ~else:
+            def iv = expr_interval(e)
+            if iv
+            | (block:
+                 def s = Syntax.make(scaled(iv[0]))
+                 def en = Syntax.make(scaled(iv[1]))
+                 acc ++ ['at [interval $s $en]: $(remove_from_id_ctxt(e, #'interval))'])
+            | acc ++ [e]
+    let [r, ...] = result
+    ['replace_full_context: $r ; ...']
