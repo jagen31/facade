@@ -35,10 +35,11 @@ println("notes under index [0]: " +& to_string(u))   // 1 (note a: index [0,1] i
 // dilate: scale the timeline about the dilate's start
 define_realizer spans:
   fun (ctxt):
-    for List (n in context_ref_all(ctxt, #'note)):
-      [args_of(n)[0].unwrap(), expr_interval(n)]
-def d = realize spans:
-          at [interval 0 1]: note a 0 5
-          at [interval 1 3]: note b 0 5
-          dilate 2
-println("dilate 2: " +& to_string(d))   // [[a,[0,2]], [b,[2,6]]]
+    println("dilate 2: "
+              +& to_string(for List (n in context_ref_all(ctxt, #'note)):
+                             [to_string(args_of(n)[0].unwrap()), expr_interval(n)]))
+    '#void'
+realize spans:                     // [[a,[0,2]], [b,[2,6]]]
+  at [interval 0 1]: note a 0 5
+  at [interval 1 3]: note b 0 5
+  dilate 2
