@@ -1,4 +1,5 @@
 #lang rhombus
+import: lib("racket/base.rkt") as rb  // weak eq-hash for the head_of memo
 
 // =====================================================================
 // facade -- the interpreter, at PHASE 0.
@@ -58,8 +59,22 @@ class ArtVarKind(exprs)              // a rewritten program, spliced on referenc
 // syntax utilities -- head, args, and the identity-context property
 // ---------------------------------------------------------------------
 
+// `head_of` is called millions of times per rewrite -- once per element
+// on every `context_ref`, over both the program context and the (tiny but
+// very hot) per-form coordinate lists -- and the pattern-match is a syntax
+// operation that dominates the cost.  Memoize it: forms are immutable, so
+// a form's head never changes.  Keyed by object identity in a *weak* table
+// (entries vanish when the syntax is collected); the `#'none` sentinel
+// distinguishes a cached "not identifier-headed" from a miss.
+def _head_cache = rb.#{make-weak-hasheq}()
 fun head_of(stx):
-  match stx | '$(h :: Identifier) $_ ...': h.unwrap() | ~else: #false
+  def cached = rb.#{hash-ref}(_head_cache, stx, #false)
+  if cached
+  | (if cached == #'none | #false | cached)
+  | block:
+      def h = match stx | '$(h :: Identifier) $_ ...': h.unwrap() | ~else: #false
+      rb.#{hash-set!}(_head_cache, stx, h || #'none)
+      h
 fun head_id_of(stx):
   match stx | '$(h :: Identifier) $_ ...': h | ~else: #false
 fun args_of(stx):
