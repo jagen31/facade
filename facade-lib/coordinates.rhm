@@ -14,6 +14,7 @@ export:
   interval index instant name subset
   #{--}                    // sequential timeline layout (see below)
   dilate                   // scale the timeline (see below)
+  zoom                     // narrow to a coordinate region (see below)
   meta:
     expr_interval expr_start expr_end
     expr_index expr_single_index
@@ -185,6 +186,19 @@ meta:
 // outside the dilate's coordinate scope are dropped, so a bare top-level
 // `dilate` scales the whole piece; nested, it scales just its region.
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// zoom  --  narrow the context to the zoom's own coordinate scope: every
+// form NOT within it is dropped (art3's `zoom`).  `at [section a]: zoom`
+// keeps only section a; nested coordinates compose as usual.
+// ---------------------------------------------------------------------
+
+define_rewriter zoom:
+  fun (expr):
+    for values(acc = []) (e in current_ctxt()):
+      if context_within(get_ctxt(e), get_ctxt(expr), lookup_ctxt())
+      | acc
+      | acc ++ [delete_expr(e)]
 
 define_rewriter dilate:
   fun (expr):
