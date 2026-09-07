@@ -39,7 +39,7 @@ export:
     head_of head_id_of args_of body_of get_ctxt set_ctxt
     kind_of coord_kind kind_lookup current_kind_lookup with_kind_lookup
     install_default_kind_lookup
-    context_ref context_ref_all context_ref_surrounding context_ref_within
+    context_ref context_ref_all context_ref_all_nested context_ref_surrounding context_ref_within
     remove_from_ctxt put_in_ctxt coord_names
     get_context require_context remove_from_id_ctxt put_in_id_ctxt rewrite_in
     merge_coordinates context_within
@@ -54,6 +54,8 @@ export:
   define_embedding
   define_realizer
   realize
+  // the one standard rewriter that ships with the engine
+  rewrite_nested
 
 // Make the `kind_lookup` parameter *default* to art3's syntax-local-value
 // over the `af` space: fill in the default the parameter falls back to.
@@ -140,3 +142,23 @@ expr.macro 'realize $(rname :: Identifier): $prog; ...':
   def k = syntax_meta.value(rname, af_meta.space, fun (): #false)
   def ctxt = rewrite([prog, ...])
   value_to_syntax((k.body)(ctxt), rname)
+
+// rewrite_nested: <block of rewriters>  -- run the rewriters here, and inside
+// every embedding in scope, recursively, so they reach content at any depth
+// (a generic rewrite_in_<anything>).  An embedding holds its rewritten body as
+// the `inner` property; we descend, apply the same block, and rebuild it.
+// A lazily-stored embedding (e.g. programmart's art_program) carries no
+// rewritable content here, so it is passed over -- see its rewrite_in_program.
+define_rewriter rewrite_nested:
+  fun (stx):
+    def body = body_of(stx)
+    def [b, ...] = body
+    def replacements = for values(acc = []) (e in current_ctxt()):
+      def hid = head_id_of(e)
+      cond
+      | hid && (kind_of(hid) is_a EmbeddingKind):
+          def items = e.group_property(#'inner) || []
+          def [it, ...] = rewrite_in(items, ['rewrite_nested: $b ; ...'])
+          acc ++ [delete_expr(e), set_ctxt('$hid: $it ; ...', get_ctxt(e))]
+      | ~else: acc
+    body ++ replacements

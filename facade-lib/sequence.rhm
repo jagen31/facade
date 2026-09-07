@@ -16,9 +16,12 @@ import:
   "private/core.rhm" open
   // ix__ emits `index` coordinates, so their binding must resolve here
   "coordinates.rhm" open
+  meta:
+    lib("racket/base.rkt") as rkt      // floor, inexact->exact in rewriters
 
 export:
   seq ix__ rewrite_in_seq
+  loop rhythm apply_rhythm uniform_rhythm uniform_rhythm_star
   meta:
     seq_items rebuild_seq
 
@@ -49,3 +52,91 @@ define_mapping_rewriter rewrite_in_seq over seq:
   fun (stx, s):
     def new_items = rewrite_in(seq_items(s), body_of(stx))
     [rebuild_seq(s, new_items)]
+
+// =====================================================================
+// generative timeline vocabulary, ported from art3's art/timeline:
+// `loop` (tile a body across an interval), `rhythm` + `apply_rhythm`
+// (lay a `seq`'s items into successive intervals), and `uniform_rhythm`.
+// =====================================================================
+
+// loop <size>: <body>  -- tile the surrounding interval with copies of the
+// body, each `size` beats long (art3's reified loop + expand_loop).  The
+// body's own intervals translate into each copy.
+define_rewriter loop:
+  fun (stx):
+    match stx
+    | 'loop $size: $body; ...':
+        def iv = expr_interval(stx)
+        cond
+        | !iv: []
+        | ~else:
+            def s = iv[0]
+            def e = iv[1]
+            def sz = size.unwrap()
+            def ncopies = rkt.#{inexact->exact}(rkt.#{floor}((e - s) / sz))
+            def coords = remove_from_ctxt(remove_from_ctxt(get_ctxt(stx), #'interval), #'art_id)
+            for values(acc = []) (k in 0 .. ncopies):
+              def a = Syntax.make(s + k * sz)
+              def b = Syntax.make(s + (k + 1) * sz)
+              // voice (and any other coords) go INSIDE the brackets so they
+              // reach the body; the body's own intervals translate into [a,b]
+              def copy:
+                cond
+                | coords.length() == 0: 'at [interval $a $b]: $body ; ...'
+                | ~else: (block: let [c, ...] = coords; 'at [$c, ..., interval $a $b]: $body ; ...')
+              acc ++ [copy]
+    | ~else: []
+
+// rhythm <d> ...  -- a list of durations, consumed by apply_rhythm
+define_object rhythm
+
+// apply_rhythm  -- for each `rhythm` in scope, find the `seq` sharing its
+// coordinates, sort that seq's items by index, and lay them out end to end
+// with the rhythm's durations (art3's apply-rhythm): item i covers a box of
+// length d_i.  The seq is consumed; the rhythm becomes the `--` layout.
+define_mapping_rewriter apply_rhythm over rhythm:
+  fun (stx, r):
+    def ss = context_ref_surrounding(current_ctxt(), get_ctxt(r), #'seq)
+    cond
+    | ss.length() == 0: []
+    | ~else:
+        def s = ss[0]
+        def durs = args_of(r)
+        def items = seq_items(s).sort(fun (a, b): (expr_single_index(a) || 0) < (expr_single_index(b) || 0))
+        // absolute layout: keep the rhythm's segment offset (so a segment at
+        // [8 16] lands its items at 8,10,...), and give each item the segment's
+        // coordinates (voice) plus its own interval -- set directly, no merge.
+        def seg = expr_interval(r)
+        def coords = remove_from_ctxt(remove_from_ctxt(get_ctxt(r), #'interval), #'art_id)
+        def t = Box(if seg | seg[0] | 0)
+        for values(acc = [delete_expr(s)]) (d in durs, it in items):
+          def t0 = Syntax.make(t.value)
+          def t1 = Syntax.make(t.value + d.unwrap())
+          t.value := t.value + d.unwrap()
+          acc ++ [set_ctxt(it, coords ++ ['interval $t0 $t1'])]
+
+// uniform_rhythm <v>  -- a rhythm of value `v` repeated to fill the
+// surrounding interval (art3's uniform-rhythm / urhy)
+define_rewriter uniform_rhythm:
+  fun (stx):
+    match stx
+    | 'uniform_rhythm $v':
+        def iv = expr_interval(stx)
+        cond
+        | !iv: []
+        | ~else:
+            def d = iv[1] - iv[0]
+            def num = rkt.#{inexact->exact}(rkt.#{floor}(d / v.unwrap()))
+            def vals = for List (_ in 0 .. num): v
+            let [uv, ...] = vals
+            [set_ctxt('rhythm $uv ...', remove_from_ctxt(get_ctxt(stx), #'art_id))]
+    | ~else: []
+
+// uniform_rhythm_star <v>  -- uniform_rhythm then apply_rhythm (art3's urhy*)
+define_rewriter uniform_rhythm_star:
+  fun (stx):
+    match stx
+    | 'uniform_rhythm_star $v':
+        [set_ctxt('uniform_rhythm $v', remove_from_ctxt(get_ctxt(stx), #'art_id)),
+         'apply_rhythm']
+    | ~else: []
