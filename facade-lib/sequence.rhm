@@ -1,20 +1,7 @@
 #lang rhombus/and_meta
 
-// =====================================================================
-// facade -- the sequence layer, ported from art3's art/sequence.
-//
-//   seq            an embedding: a block of items, rewritten and held
-//   ix__           lay a block of items out along the `index` coordinate
-//                  (art3's `ix--`; `--` is an operator token in Rhombus)
-//   rewrite_in_seq run a block of rewriters *inside* each seq in scope
-//
-// Multi-item forms use a block (`seq: a; b`) -- the facade idiom for an
-// embedding body -- so they nest cleanly (`seq: ix__: a; b`).
-// =====================================================================
-
 import:
   "private/core.rhm" open
-  // ix__ emits `index` coordinates, so their binding must resolve here
   "coordinates.rhm" open
   meta:
     lib("racket/base.rkt") as rkt      // floor, inexact->exact in rewriters
@@ -25,43 +12,27 @@ export:
   meta:
     seq_items rebuild_seq
 
-// seq: an embedding whose block body is rewritten and stored as its inner
 define_embedding seq:
   fun (expr): rewrite(body_of(expr))
 
 meta:
-  // the (rewritten) items inside a seq form
   fun seq_items(s): s.group_property(#'inner) || []
-  // a fresh seq form carrying `items` as its block body, keeping the
-  // original seq's coordinates -- so re-running it re-lands the new items
   fun rebuild_seq(s, items):
     block:
       let [it, ...] = items
       set_ctxt('seq: $it ; ...', get_ctxt(s))
 
-// ix__: lay each item of the block out along `index`, 0-based
 define_rewriter ix__:
   fun (expr):
     for values(acc = []) (it in body_of(expr), i in 0 ..):
       def ix = Syntax.make(i)
       acc ++ ['at [index $ix]: $it']
 
-// rewrite_in_seq: <block of rewriters>  -- for each seq in scope, run the
-// rewriters seeded with that seq's items, and rebuild the seq
 define_mapping_rewriter rewrite_in_seq over seq:
   fun (stx, s):
     def new_items = rewrite_in(seq_items(s), body_of(stx))
     [rebuild_seq(s, new_items)]
 
-// =====================================================================
-// generative timeline vocabulary, ported from art3's art/timeline:
-// `loop` (tile a body across an interval), `rhythm` + `apply_rhythm`
-// (lay a `seq`'s items into successive intervals), and `uniform_rhythm`.
-// =====================================================================
-
-// loop <size>: <body>  -- tile the surrounding interval with copies of the
-// body, each `size` beats long (art3's reified loop + expand_loop).  The
-// body's own intervals translate into each copy.
 define_rewriter loop:
   fun (stx):
     match stx
@@ -87,13 +58,8 @@ define_rewriter loop:
               acc ++ [copy]
     | ~else: []
 
-// rhythm <d> ...  -- a list of durations, consumed by apply_rhythm
 define_object rhythm
 
-// apply_rhythm  -- for each `rhythm` in scope, find the `seq` sharing its
-// coordinates, sort that seq's items by index, and lay them out end to end
-// with the rhythm's durations (art3's apply-rhythm): item i covers a box of
-// length d_i.  The seq is consumed; the rhythm becomes the `--` layout.
 define_mapping_rewriter apply_rhythm over rhythm:
   fun (stx, r):
     def ss = context_ref_surrounding(current_ctxt(), get_ctxt(r), #'seq)
@@ -118,8 +84,6 @@ define_mapping_rewriter apply_rhythm over rhythm:
           set_ctxt(it, coords ++ ['interval $t0 $t1'])
         [delete_expr(s)] ++ laid
 
-// uniform_rhythm <v>  -- a rhythm of value `v` repeated to fill the
-// surrounding interval (art3's uniform-rhythm / urhy)
 define_rewriter uniform_rhythm:
   fun (stx):
     match stx
@@ -135,7 +99,6 @@ define_rewriter uniform_rhythm:
             [set_ctxt('rhythm $uv ...', remove_from_ctxt(get_ctxt(stx), #'art_id))]
     | ~else: []
 
-// uniform_rhythm_star <v>  -- uniform_rhythm then apply_rhythm (art3's urhy*)
 define_rewriter uniform_rhythm_star:
   fun (stx):
     match stx

@@ -1,20 +1,12 @@
 #lang rhombus/and_meta
 
-// =====================================================================
-// facade -- the standard coordinate library, ported from art3's
-// art/coordinate/{interval,index,instant,name,subset}.rkt.
-//
-// Each coordinate is written flat (space-separated args) rather than
-// art3's bracketed forms, e.g. `interval 0 4`, `index 1 2`, `name a b`.
-// =====================================================================
-
 import: "private/core.rhm" open
 
 export:
   interval index instant name subset
-  #{--}                    // sequential timeline layout (see below)
-  dilate                   // scale the timeline (see below)
-  zoom                     // narrow to a coordinate region (see below)
+  #{--}
+  dilate
+  zoom
   meta:
     expr_interval expr_start expr_end
     expr_index expr_single_index
@@ -35,10 +27,6 @@ meta:
   fun dedup(items):
     for values(acc = []) (a in items):
       if mem(a.unwrap(), acc.map(fun (b): b.unwrap())) | acc | acc ++ [a]
-
-// ---------------------------------------------------------------------
-// interval  --  `interval start end`; nesting translates the start
-// ---------------------------------------------------------------------
 
 define_coordinate interval:
   merge:
@@ -64,17 +52,6 @@ meta:
     def iv = expr_interval(e)
     if iv | iv[1] | #false
 
-// ---------------------------------------------------------------------
-// --  --  sequential layout on the interval timeline.  Each box
-// `[len, body ...]` is placed end to end: box i covers `[t, t+len)`,
-// becoming `at [interval t (t+len)]: body; ...`, and t advances by len.
-// An optional leading number sets the starting t (default 0):
-//   -- [1, note a 0 4] [2, note d 0 5]        // 0..1, 1..3
-//   -- 4 [1, note a 0 4] [1, note b 0 4]      // 4..5, 5..6
-// Written `#{--}` because `--` is an operator token in Rhombus, not an
-// identifier; `#{--}` is that identifier, and prints back as `--`.
-// ---------------------------------------------------------------------
-
 define_rewriter #{--}:
   fun (expr):
     def args = args_of(expr)
@@ -95,10 +72,6 @@ define_rewriter #{--}:
           acc ++ ['at [interval $s $e]: $body; ...']
       | ~else: syntax_meta.error("--: expected a [len, body ...] box", b)
 
-// ---------------------------------------------------------------------
-// index  --  `index i ...`; nesting appends, `within?` by prefix
-// ---------------------------------------------------------------------
-
 define_coordinate index:
   merge:
     fun (l, r, _l, _r, _c):
@@ -116,14 +89,9 @@ meta:
   fun expr_index(e):
     def c = context_ref(get_ctxt(e), #'index)
     if c | nums(c) | []
-  // the first index value (art3's expr-single-index), or #false
   fun expr_single_index(e):
     def ix = expr_index(e)
     if ix.length() > 0 | ix[0] | #false
-
-// ---------------------------------------------------------------------
-// instant  --  `instant t`; cannot merge two, `within?` by equal value
-// ---------------------------------------------------------------------
 
 define_coordinate instant:
   within:
@@ -133,10 +101,6 @@ meta:
   fun expr_instant(e):
     def c = context_ref(get_ctxt(e), #'instant)
     if c | nums(c)[0] | #false
-
-// ---------------------------------------------------------------------
-// name  --  `name a ...`; nesting appends, `within?` by prefix
-// ---------------------------------------------------------------------
 
 define_coordinate name:
   merge:
@@ -155,11 +119,6 @@ meta:
   fun expr_names(e):
     def c = context_ref(get_ctxt(e), #'name)
     if c | nums(c) | []
-
-// ---------------------------------------------------------------------
-// subset  --  `subset x ...`; a set of names.  Merge is union,
-// `within?` is (right is a subset of left).
-// ---------------------------------------------------------------------
 
 define_coordinate subset:
   merge:
@@ -180,23 +139,8 @@ meta:
     def c = context_ref(get_ctxt(e), #'subset)
     if c | nums(c) | []
 
-// ---------------------------------------------------------------------
-// dilate value  --  scale every interval and instant in scope by `value`
-// about the dilate's own start point (art3's timeline `dilate`).  Forms
-// outside the dilate's coordinate scope are dropped, so a bare top-level
-// `dilate` scales the whole piece; nested, it scales just its region.
-// ---------------------------------------------------------------------
-
-// ---------------------------------------------------------------------
-// zoom  --  narrow the context to the zoom's own coordinate scope: every
-// form NOT within it is dropped (art3's `zoom`).  `at [section a]: zoom`
-// keeps only section a; nested coordinates compose as usual.
-// ---------------------------------------------------------------------
-
 define_rewriter zoom:
   fun (expr):
-    // drop every form NOT within the zoom scope, in one batched deletion (an
-    // `acc ++ [delete_expr(e)]` fold plus a per-form delete would be O(n^2))
     def outside = current_ctxt().filter(~keep: fun (e): !context_within(get_ctxt(e), get_ctxt(expr), lookup_ctxt()))
     [delete_exprs(outside)]
 

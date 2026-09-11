@@ -1,39 +1,16 @@
 #lang rhombus/and_meta
 
-// =====================================================================
-// facade -- the surface of Art 4, in Rhombus.
-//
-// The engine itself now lives at PHASE 0, in `interp.rhm`, abstracted
-// over a name->kind lookup.  This module is the phase-1 skin around it:
-//
-//   - the `af` space, in which object / coordinate / rewriter / embedding
-//     / realizer names are bound to a compile-time kind
-//   - the surface definers (`define_object`, `define_coordinate`,
-//     `define_rewriter`, ...) and the `realize` form
-//
-// It `import`s the interpreter AT PHASE 1 (so these macros can run it
-// during expansion), re-exports it AT PHASE 1 (so client rewriter /
-// realizer / coordinate bodies, and the generated `af.bind` right-hand
-// sides, can use it), and installs the phase-1 lookup: art3's
-// `syntax-local-value` over the `af` space, as `syntax_meta.value`.
-// Because the lookup is a parameter, the same engine runs unchanged at
-// phase 0 with a different lookup installed.
-// =====================================================================
-
 space.transform af:
   space_path facade/af
   bridge_definer bind
   meta_namespace af_meta:
     reflection space
 
-// the phase-0 engine, brought up to phase 1 for use in the macros below
 import:
   meta:
     "interp.rhm" open
 
 export:
-  // re-export the whole engine at phase 1, for client meta code and for
-  // the `af.bind` right-hand sides the definers expand into
   meta:
     ObjectKind CoordinateKind RewriterKind EmbeddingKind RealizerKind ArtVarKind
     head_of head_id_of args_of body_of get_ctxt set_ctxt
@@ -54,39 +31,19 @@ export:
   define_embedding
   define_realizer
   realize
-  // the one standard rewriter that ships with the engine
   rewrite_nested
 
-// Make the `kind_lookup` parameter *default* to art3's syntax-local-value
-// over the `af` space: fill in the default the parameter falls back to.
-// `syntax_meta.value` is only valid inside expansion, but here we merely
-// *store the closure*; it is called later -- during `rewrite` / `realize`
-// / `af.bind` expansion -- when there is an expansion context.  A phase-0
-// client overrides `kind_lookup` (via `with_kind_lookup` / `parameterize`)
-// to run the same engine against its own registry.
 meta:
   install_default_kind_lookup(fun (name): syntax_meta.value(name, af_meta.space, fun (): #false))
-
-// ---------------------------------------------------------------------
-// surface: definers and the realize form
-// ---------------------------------------------------------------------
 
 defn.macro 'define_object $(name :: Identifier)':
   'af.bind $name: ObjectKind()'
 
-// define_art name: <program>  -- rewrite the body now and bind `name` to
-// it; a later reference to `name` in a program splices it in (art3's
-// define-art variable).
 defn.macro 'define_art $(name :: Identifier): $g; ...':
   'af.bind $name: ArtVarKind(rewrite(['$g', ...]))'
 
-// define_coordinate name                 -- a plain coordinate
-// define_coordinate name:                 -- with rules, each a fun
-//   merge:  fun (l_star, r_star, l, r, ctxt): ...   // -> Syntax
-//   within: fun (l_star, r_star, l, r, ctxt): ...   // -> Boolean
 defn.macro
 | 'define_coordinate $(name :: Identifier): $clause; ...':
-    // the body groups of the `kw:` clause, or #false
     fun body_for(kw):
       for values(found = #false) (cl in [clause, ...]):
         match cl
@@ -112,19 +69,11 @@ defn.macro 'define_rewriter $(name :: Identifier): $g; ...':
      def the_fn: $g; ...
      RewriterKind(the_fn)'
 
-// define_mapping_rewriter name over head: fun (stx, obj): <list of exprs>
-// -- art3's define-mapping-rewriter: find every form of type `head` within
-// the rewriter's scope, delete them, and splice in `body(stx, obj)` for
-// each (a list of exprs).  `stx` is the rewriter call; `obj` each match.
 defn.macro 'define_mapping_rewriter $(name :: Identifier) over $(head :: Identifier): $g; ...':
   'af.bind $name:
      def the_body: $g; ...
      fun the_rw(stx):
        def melodies = context_ref_within(current_ctxt(), get_ctxt(stx), #'$head)
-       // delete all the matches in ONE batched instruction, and append each
-       // match's output once (O(total)).  The old `melodies.map(delete_expr)` +
-       // `acc ++ ...` fold made every mapping rewriter O(matches^2): n separate
-       // deletions each re-scan the whole context, and the append grew per step.
        def outs = List.append(& melodies.map(fun (m): the_body(stx, m)))
        [delete_exprs(melodies)] ++ outs
      RewriterKind(the_rw)'
@@ -137,27 +86,15 @@ defn.macro 'define_realizer $(name :: Identifier): $g; ...':
      def the_fn: $g; ...
      RealizerKind(the_fn)'
 
-// realize rname: <program block>  -- rewrite the program (compile time),
-// run the realizer, and pack its result as a literal in the use site's
-// lexical context.  A realizer returns an ordinary value (e.g. a string
-// of generated code), art3-style.
 expr.macro 'realize $(rname :: Identifier): $prog; ...':
   def k = syntax_meta.value(rname, af_meta.space, fun (): #false)
   def ctxt = rewrite([prog, ...])
   value_to_syntax((k.body)(ctxt), rname)
 
-// rewrite_nested: <block of rewriters>  -- run the rewriters here, and inside
-// every embedding in scope, recursively, so they reach content at any depth
-// (a generic rewrite_in_<anything>).  An embedding holds its rewritten body as
-// the `inner` property; we descend, apply the same block, and rebuild it.
-// A lazily-stored embedding (e.g. programmart's art_program) carries no
-// rewritable content here, so it is passed over -- see its rewrite_in_program.
 define_rewriter rewrite_nested:
   fun (stx):
     def body = body_of(stx)
     def [b, ...] = body
-    // rebuild each embedding with its inner rewritten, and delete the originals
-    // in ONE batched instruction (n separate deletes each re-scan -> O(n^2))
     def embs = current_ctxt().filter(~keep: fun (e): def hid = head_id_of(e); hid && (kind_of(hid) is_a EmbeddingKind))
     def rebuilt = for List (e in embs):
       def hid = head_id_of(e)
