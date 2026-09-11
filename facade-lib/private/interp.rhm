@@ -1,25 +1,6 @@
 #lang rhombus
 import: lib("racket/base.rkt") as rb  // weak eq-hash for the head_of memo
 
-// =====================================================================
-// facade -- the interpreter, at PHASE 0.
-//
-// This is the whole Art 4 engine: the syntax utilities, coordinate
-// merge / within?, the art-id machinery, and the rewriter (`rewrite` /
-// `run_art_expr`).  It manipulates *syntax objects* as ordinary runtime
-// values, so -- unlike art3, and unlike facade's earlier all-`meta`
-// core -- it lives at phase 0 and can run at either phase.
-//
-// The one thing an interpreter needs that is inherently phase-specific
-// is "given a name, what art form is it bound to?".  art3 answered that
-// with `syntax-local-value` (phase 1 only).  Here that lookup is
-// abstracted into a *parameter* (`with_kind_lookup` / `set_kind_lookup`,
-// consulted by `kind_of`).  `core.rhm` installs the phase-1,
-// `syntax_meta.value`-over-the-`af`-space lookup around the surface
-// macros; a phase-0 client can install its own (e.g. a runtime registry)
-// and run the very same engine at run time.
-// =====================================================================
-
 export:
   // kinds
   ObjectKind CoordinateKind RewriterKind EmbeddingKind RealizerKind ArtVarKind
@@ -37,14 +18,9 @@ export:
   // current + lookup contexts
   current_ctxt lookup_ctxt with_ctxts
   // art-id
-  fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr
+  fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr delete_exprs
   // the engine
   run_art_exprs run_art_expr rewrite value_to_syntax
-
-// ---------------------------------------------------------------------
-// kinds -- the value bound to each art-form name.  A coordinate carries
-// its own merge / within? rules (each a function or #false).
-// ---------------------------------------------------------------------
 
 class ObjectKind()
 // merge/within: (l*, r*, l, r, ctxt) -> Syntax / Boolean;
@@ -59,13 +35,6 @@ class ArtVarKind(exprs)              // a rewritten program, spliced on referenc
 // syntax utilities -- head, args, and the identity-context property
 // ---------------------------------------------------------------------
 
-// `head_of` is called millions of times per rewrite -- once per element
-// on every `context_ref`, over both the program context and the (tiny but
-// very hot) per-form coordinate lists -- and the pattern-match is a syntax
-// operation that dominates the cost.  Memoize it: forms are immutable, so
-// a form's head never changes.  Keyed by object identity in a *weak* table
-// (entries vanish when the syntax is collected); the `#'none` sentinel
-// distinguishes a cached "not identifier-headed" from a miss.
 def _head_cache = rb.#{make-weak-hasheq}()
 fun head_of(stx):
   def cached = rb.#{hash-ref}(_head_cache, stx, #false)
@@ -87,21 +56,6 @@ fun body_of(stx):
 fun get_ctxt(stx): stx.group_property(#'id_ctxt) || []
 fun set_ctxt(stx, ctxt): stx.group_property(#'id_ctxt, ctxt, #true)
 
-// ---------------------------------------------------------------------
-// the abstracted name -> kind lookup -- a dynamic PARAMETER.  `kind_of`
-// consults it; a client overrides it dynamically with `with_kind_lookup`
-// (or `parameterize`).  This is the seam that lets the engine run at
-// phase 0 or phase 1.
-//
-// The parameter's *default* delegates to `default_kind_lookup_box`.  That
-// box is what `core.rhm` fills in -- at phase 1 -- with art3's
-// syntax-local-value over the `af` space (`syntax_meta.value`), which
-// this phase-0 module cannot name itself.  So once facade is loaded the
-// parameter defaults to using `syntax_meta.value`; a phase-0 client
-// either overrides it per-extent or replaces the default with
-// `install_default_kind_lookup`.
-// ---------------------------------------------------------------------
-
 def default_kind_lookup_box = Box(fun (name): error("facade: no name->kind lookup installed"))
 // set what the parameter falls back to when nobody has overridden it
 fun install_default_kind_lookup(lk): default_kind_lookup_box.value := lk
@@ -119,22 +73,12 @@ fun coord_kind(coord):
   def h = head_id_of(coord)
   if h | kind_of(h) | #false
 
-// ---------------------------------------------------------------------
-// context utilities -- a context is a `List` of form syntaxes
-// ---------------------------------------------------------------------
-
 fun context_ref_all(ctxt, name):
   ctxt.filter(~keep: fun (e): head_of(e) == name)
 fun context_ref(ctxt, name):
   def r = context_ref_all(ctxt, name)
   if r.length() == 0 | #false | r[0]
 
-// like art3's lookup context, which "penetrates the embedding barriers":
-// every form of type `name` at this level *and* recursively inside every
-// embedding (its `inner`).  A form found inside an embedding inherits the
-// embedding's coordinates (its section, voice, ...), so a note held in a
-// `music` at section X is seen as a note at section X -- readers (engravers,
-// synths) need not know how the music was organized.
 fun context_ref_all_nested(ctxt, name):
   for values(acc = []) (e in ctxt):
     def here = if head_of(e) == name | [e] | []
@@ -148,22 +92,16 @@ fun remove_from_ctxt(ctxt, name):
   ctxt.filter(~keep: fun (e): head_of(e) != name)
 fun put_in_ctxt(ctxt, e):
   [e] ++ remove_from_ctxt(ctxt, head_of(e))
-// forms of type `name` whose coordinates *contain* `coords`, nearest first
 fun context_ref_surrounding(ctxt, coords, name):
   def cands = ctxt.filter(~keep: fun (e): head_of(e) == name && context_within(coords, get_ctxt(e), ctxt))
   cands.sort(fun (l, r): context_within(get_ctxt(l), get_ctxt(r), ctxt))
-// forms of type `name` *contained by* `coords`
 fun context_ref_within(ctxt, coords, name):
   ctxt.filter(~keep: fun (e): head_of(e) == name && context_within(get_ctxt(e), coords, ctxt))
-// distinct coordinate heads across two contexts, as (symbol, syntax) so
-// we can both compare and look up the kind
 fun coord_names(left, right):
   for values(acc = []) (c in (left ++ right)):
     def n = head_of(c)
     if acc.filter(~keep: fun (p): p[0] == n).length() > 0 | acc | acc ++ [[n, c]]
 
-// the `name` coordinate on `expr` itself, else the nearest one surrounding
-// it in `ctxt` (art3's get-context)
 fun get_context(ctxt, expr, name):
   def own = context_ref(get_ctxt(expr), name)
   cond
@@ -171,21 +109,12 @@ fun get_context(ctxt, expr, name):
   | ~else:
       def surr = context_ref_surrounding(ctxt, get_ctxt(expr), name)
       if surr.length() > 0 | surr[0] | #false
-// get_context, or error if absent (art3's require-context)
 fun require_context(ctxt, expr, name):
   def r = get_context(ctxt, expr, name)
   if r | r | error("require_context: no " +& to_string(name) +& " in context of " +& to_string(expr))
-// drop / replace a coordinate on a form's own identity context
 fun remove_from_id_ctxt(stx, name): set_ctxt(stx, remove_from_ctxt(get_ctxt(stx), name))
 fun put_in_id_ctxt(stx, e): set_ctxt(stx, put_in_ctxt(get_ctxt(stx), e))
 
-// ---------------------------------------------------------------------
-// coordinate merge + within?  -- driven by each coordinate's own rules,
-// looked up from its binding through the installed lookup
-// ---------------------------------------------------------------------
-
-// merge coordinate list `left` into `right`, applying each present
-// coordinate's merge rule (mirrors art3's merge-coordinates)
 fun merge_coordinates(left, right, ctxt):
   for values(acc = right) (pair in coord_names(left, right)):
     def name = pair[0]
@@ -195,20 +124,14 @@ fun merge_coordinates(left, right, ctxt):
         def m = c.merge
         def l_star = context_ref(left, name)
         def r_star = context_ref(acc, name)
-        // homogeneous merge of this coordinate; with no merge rule the
-        // default is to carry it (inner/right wins, else outer/left)
         def acc2:
           if l_star || r_star
           | put_in_ctxt(acc, if m | m(l_star, r_star, left, acc, ctxt) | (r_star || l_star))
           | acc
-        // then this coordinate's non-homogeneous rule (may drop/modify
-        // *other* coordinates), given the whole left and right contexts
         def nh = c.nonhom
         if nh | nh(left, acc2, ctxt) | acc2
     | ~else: acc
 
-// is context `l` within context `r`?  each coordinate's within? rule
-// must agree; a coordinate present on one side only follows art3's rule
 fun context_within(l, r, ctxt):
   for values(acc = #true) (pair in coord_names(l, r)):
     def name = pair[0]
@@ -226,10 +149,6 @@ fun context_within(l, r, ctxt):
       | ~else: #true
     acc && ok
 
-// ---------------------------------------------------------------------
-// current + lookup contexts (art3's phase-1 parameters, here plain Boxes)
-// ---------------------------------------------------------------------
-
 def current_ctxt_box = Box([])
 def lookup_ctxt_box = Box([])
 fun current_ctxt(): current_ctxt_box.value
@@ -243,10 +162,6 @@ fun with_ctxts(cur, lk, thunk):
   current_ctxt_box.value := oc
   lookup_ctxt_box.value := ol
   r
-
-// ---------------------------------------------------------------------
-// art-id -- a unique id coordinate assigned as a form lands
-// ---------------------------------------------------------------------
 
 def id_counter = Box(0)
 fun fresh_id():
@@ -269,10 +184,12 @@ fun id_eq(a, b): a && b && a.unwrap() == b.unwrap()
 fun delete_expr(e):
   def id = art_id_of(e)
   'delete_by_id $id'
-
-// ---------------------------------------------------------------------
-// the rewriting engine (over syntax; phase-agnostic)
-// ---------------------------------------------------------------------
+// ONE instruction that removes every form in `es`, filtered in a single pass.
+// A rewriter that deletes n forms by emitting n `delete_expr`s is O(n^2) (each
+// `delete_by_id` re-scans the whole context); this batches them into one scan.
+fun delete_exprs(es):
+  def [id, ...] = es.map(art_id_of).filter(~keep: fun (i): i)
+  'delete_by_ids [$id, ...]'
 
 fun run_art_exprs(exprs, ctxt, lk_ctxt):
   for values(acc = ctxt) (expr in exprs):
@@ -288,6 +205,12 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
   // delete every form carrying the given art-id
   | 'delete_by_id $the_id':
       ctxt.filter(~keep: fun (e): !id_eq(art_id_of(e), the_id))
+  // delete every form whose art-id is in the given set -- ONE scan for many
+  // deletions (a rewriter emitting n single deletes would scan n times)
+  | 'delete_by_ids [$the_id, ...]':
+      def seen :: MutableMap = MutableMap{}
+      for (i in [the_id, ...]): seen[i.unwrap()] := #true
+      ctxt.filter(~keep: fun (e): def a = art_id_of(e); !(a && seen.get(a.unwrap(), #false)))
   // discard the whole context and rewrite the body fresh
   | 'replace_full_context: $g; ...':
       run_art_exprs([g, ...], [], [])
@@ -296,12 +219,6 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
       match (if hid | kind_of(hid) | #false)
       | rw :: RewriterKind:
           def out = with_ctxts(ctxt, lk_ctxt, fun (): (rw.body)(ensure_id(expr)))
-          // A rewriter's scope reaches its output: each coordinate on the
-          // rewriter form is added to an output form that does not already
-          // carry that coordinate (so `at [section s]: -- ...` puts `s` on
-          // the laid-out forms).  It is *added, never re-merged*, so an
-          // already-scoped form keeps its own -- an append coordinate like
-          // `section` does not accumulate down a rewriter chain.
           def coords = remove_from_ctxt(get_ctxt(expr), #'art_id)
           fun carry(o):
             def oc:
@@ -323,14 +240,9 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
 fun rewrite(exprs):
   run_art_exprs(exprs, [], [])
 
-// rewrite `exprs` starting from an existing context (art3's rewrite-in):
-// they see `ctxt` (plus the lookup context) but the result extends `ctxt`
 fun rewrite_in(ctxt, exprs):
   run_art_exprs(exprs, ctxt, ctxt ++ lookup_ctxt())
 
-// pack a realizer's result as expression syntax in `ctx`'s scope:
-// already-syntax is used as-is, a list becomes a list literal, and any
-// other value becomes a literal.
 fun value_to_syntax(v, ctx):
   cond
   | v is_a Syntax: v
