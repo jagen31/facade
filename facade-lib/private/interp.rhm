@@ -37,7 +37,7 @@ export:
   // current + lookup contexts
   current_ctxt lookup_ctxt with_ctxts
   // art-id
-  fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr
+  fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr delete_exprs
   // the engine
   run_art_exprs run_art_expr rewrite value_to_syntax
 
@@ -269,6 +269,12 @@ fun id_eq(a, b): a && b && a.unwrap() == b.unwrap()
 fun delete_expr(e):
   def id = art_id_of(e)
   'delete_by_id $id'
+// ONE instruction that removes every form in `es`, filtered in a single pass.
+// A rewriter that deletes n forms by emitting n `delete_expr`s is O(n^2) (each
+// `delete_by_id` re-scans the whole context); this batches them into one scan.
+fun delete_exprs(es):
+  def [id, ...] = es.map(art_id_of).filter(~keep: fun (i): i)
+  'delete_by_ids [$id, ...]'
 
 // ---------------------------------------------------------------------
 // the rewriting engine (over syntax; phase-agnostic)
@@ -288,6 +294,12 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
   // delete every form carrying the given art-id
   | 'delete_by_id $the_id':
       ctxt.filter(~keep: fun (e): !id_eq(art_id_of(e), the_id))
+  // delete every form whose art-id is in the given set -- ONE scan for many
+  // deletions (a rewriter emitting n single deletes would scan n times)
+  | 'delete_by_ids [$the_id, ...]':
+      def seen :: MutableMap = MutableMap{}
+      for (i in [the_id, ...]): seen[i.unwrap()] := #true
+      ctxt.filter(~keep: fun (e): def a = art_id_of(e); !(a && seen.get(a.unwrap(), #false)))
   // discard the whole context and rewrite the body fresh
   | 'replace_full_context: $g; ...':
       run_art_exprs([g, ...], [], [])

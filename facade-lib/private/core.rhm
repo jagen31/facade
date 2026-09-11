@@ -44,7 +44,7 @@ export:
     get_context require_context remove_from_id_ctxt put_in_id_ctxt rewrite_in
     merge_coordinates context_within
     current_ctxt lookup_ctxt with_ctxts
-    fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr
+    fresh_id ensure_id rebuild_embedding art_id_of id_eq delete_expr delete_exprs
     run_art_exprs run_art_expr rewrite value_to_syntax
   define_object
   define_art
@@ -121,9 +121,12 @@ defn.macro 'define_mapping_rewriter $(name :: Identifier) over $(head :: Identif
      def the_body: $g; ...
      fun the_rw(stx):
        def melodies = context_ref_within(current_ctxt(), get_ctxt(stx), #'$head)
-       def dels = melodies.map(delete_expr)
-       def outs = for values(acc = []) (m in melodies): acc ++ the_body(stx, m)
-       dels ++ outs
+       // delete all the matches in ONE batched instruction, and append each
+       // match's output once (O(total)).  The old `melodies.map(delete_expr)` +
+       // `acc ++ ...` fold made every mapping rewriter O(matches^2): n separate
+       // deletions each re-scan the whole context, and the append grew per step.
+       def outs = List.append(& melodies.map(fun (m): the_body(stx, m)))
+       [delete_exprs(melodies)] ++ outs
      RewriterKind(the_rw)'
 defn.macro 'define_embedding $(name :: Identifier): $g; ...':
   'af.bind $name:
@@ -153,12 +156,13 @@ define_rewriter rewrite_nested:
   fun (stx):
     def body = body_of(stx)
     def [b, ...] = body
-    def replacements = for values(acc = []) (e in current_ctxt()):
+    // rebuild each embedding with its inner rewritten, and delete the originals
+    // in ONE batched instruction (n separate deletes each re-scan -> O(n^2))
+    def embs = current_ctxt().filter(~keep: fun (e): def hid = head_id_of(e); hid && (kind_of(hid) is_a EmbeddingKind))
+    def rebuilt = for List (e in embs):
       def hid = head_id_of(e)
-      cond
-      | hid && (kind_of(hid) is_a EmbeddingKind):
-          def items = e.group_property(#'inner) || []
-          def [it, ...] = rewrite_in(items, ['rewrite_nested: $b ; ...'])
-          acc ++ [delete_expr(e), set_ctxt('$hid: $it ; ...', get_ctxt(e))]
-      | ~else: acc
+      def items = e.group_property(#'inner) || []
+      def [it, ...] = rewrite_in(items, ['rewrite_nested: $b ; ...'])
+      set_ctxt('$hid: $it ; ...', get_ctxt(e))
+    def replacements = [delete_exprs(embs)] ++ rebuilt
     body ++ replacements

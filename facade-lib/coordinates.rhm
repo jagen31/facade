@@ -195,10 +195,10 @@ meta:
 
 define_rewriter zoom:
   fun (expr):
-    for values(acc = []) (e in current_ctxt()):
-      if context_within(get_ctxt(e), get_ctxt(expr), lookup_ctxt())
-      | acc
-      | acc ++ [delete_expr(e)]
+    // drop every form NOT within the zoom scope, in one batched deletion (an
+    // `acc ++ [delete_expr(e)]` fold plus a per-form delete would be O(n^2))
+    def outside = current_ctxt().filter(~keep: fun (e): !context_within(get_ctxt(e), get_ctxt(expr), lookup_ctxt()))
+    [delete_exprs(outside)]
 
 define_rewriter dilate:
   fun (expr):

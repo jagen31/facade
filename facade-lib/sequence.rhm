@@ -109,11 +109,14 @@ define_mapping_rewriter apply_rhythm over rhythm:
         def seg = expr_interval(r)
         def coords = remove_from_ctxt(remove_from_ctxt(get_ctxt(r), #'interval), #'art_id)
         def t = Box(if seg | seg[0] | 0)
-        for values(acc = [delete_expr(s)]) (d in durs, it in items):
+        // lay each item on its interval, building the list once (an `acc ++ [..]`
+        // fold over a growing `acc` is O(items^2))
+        def laid = for List (d in durs, it in items):
           def t0 = Syntax.make(t.value)
           def t1 = Syntax.make(t.value + d.unwrap())
           t.value := t.value + d.unwrap()
-          acc ++ [set_ctxt(it, coords ++ ['interval $t0 $t1'])]
+          set_ctxt(it, coords ++ ['interval $t0 $t1'])
+        [delete_expr(s)] ++ laid
 
 // uniform_rhythm <v>  -- a rhythm of value `v` repeated to fill the
 // surrounding interval (art3's uniform-rhythm / urhy)
