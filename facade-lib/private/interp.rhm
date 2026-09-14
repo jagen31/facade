@@ -191,6 +191,19 @@ fun delete_exprs(es):
   def [id, ...] = es.map(art_id_of).filter(~keep: fun (i): i)
   'delete_by_ids [$id, ...]'
 
+// A form injected by a DrRacket `read-special` snip arrives as a group that
+// merely WRAPS the real form(s): `(group <multi>)`, because a special can only
+// contribute a single term where it sits.  If such a wrapper reaches the engine
+// (its head is not an identifier), return the form(s) the multi holds; else #f.
+// This lets an injected snip compose in every context (`seq`/`ix__`, `loop`, ...),
+// not only at a top-level art position (there a direct pattern match sees through
+// one wrapper; `body_of` + re-splice does not).
+fun unwrap_injected(expr):
+  def terms = expr.unwrap_group()
+  if terms.length() == 1
+  | (for List (g in terms[0].unwrap_sequence()): g)
+  | #false
+
 fun run_art_exprs(exprs, ctxt, lk_ctxt):
   for values(acc = ctxt) (expr in exprs):
     run_art_expr(expr, acc, acc ++ lk_ctxt)
@@ -235,7 +248,12 @@ fun run_art_expr(expr, ctxt, lk_ctxt):
           run_art_exprs((av.exprs).map(pull), ctxt, lk_ctxt)
       | ob :: ObjectKind: ctxt ++ [ensure_id(expr)]
       | co :: CoordinateKind: ctxt ++ [ensure_id(expr)]
-      | ~else: error("run_art_expr: unknown art form: " +& to_string(expr))
+      | ~else:
+          // no identifier head: maybe a read-special snip's wrapper group --
+          // unfold it and run the form(s) it holds; otherwise it's a real error
+          match (if hid | #false | unwrap_injected(expr))
+          | inner :: List: run_art_exprs(inner, ctxt, lk_ctxt)
+          | ~else: error("run_art_expr: unknown art form: " +& to_string(expr))
 
 fun rewrite(exprs):
   run_art_exprs(exprs, [], [])
