@@ -7,6 +7,7 @@ export:
   #{--}
   dilate
   zoom
+  dump
   meta:
     expr_interval expr_start expr_end
     expr_index expr_single_index
@@ -168,3 +169,38 @@ define_rewriter dilate:
             | acc ++ [e]
     let [r, ...] = result
     ['replace_full_context: $r ; ...']
+
+// ---------------------------------------------------------------------
+// dump  --  a debug realizer: the program's forms with their coordinates, as
+// a readable string.  `realize dump: <program>` shows what a rewrite produced
+// (each form's head + args, then `@` its coordinates; embeddings' inner forms
+// are indented beneath).  The `art_id` coordinate is hidden as noise.
+// ---------------------------------------------------------------------
+
+meta:
+  fun dump_join(strs, sep):
+    for values(acc = "") (s in strs, i in 0 ..):
+      if i == 0 | s | acc +& sep +& s
+  fun dump_form(e, indent):
+    def h = head_of(e)
+    def inner = e.group_property(#'inner) || []
+    def label:
+      cond
+      | !h: to_string(e)
+      // an embedding: just its head -- its inner forms are dumped below
+      | inner.length() > 0: to_string(h)
+      | ~else:
+          def a = args_of(e).map(fun (x): to_string(x))
+          if a.length() > 0 | to_string(h) +& " " +& dump_join(a, " ") | to_string(h)
+    def coords:
+      get_ctxt(e).filter(~keep: fun (c): to_string(head_of(c)) != "art_id")
+        .map(fun (c): to_string(c))
+    def coord_str = if coords.length() > 0 | "   @ " +& dump_join(coords, ", ") | ""
+    def nested:
+      for values(acc = "") (it in inner):
+        acc +& "\n" +& dump_form(it, indent +& "  ")
+    indent +& label +& coord_str +& nested
+
+define_realizer dump:
+  fun (ctxt):
+    dump_join(for List (e in ctxt): dump_form(e, ""), "\n")
